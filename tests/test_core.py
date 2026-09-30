@@ -372,5 +372,72 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(plan.jobs, [])
 
 
+class PanelVfsTests(QtTestCase):
+    """Вход в архив как в каталог (VFS-режим панели)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sc_vfs_")
+        build_tree(self.tmp)
+        import zipfile as zf_m
+
+        self.arc = os.path.join(self.tmp, "arc.zip")
+        entries = [make_entry(os.path.join(self.tmp, n))
+                   for n in ("a.txt", "sub", "empty")]
+        with zf_m.ZipFile(self.arc, "w", zf_m.ZIP_DEFLATED) as z:
+            z.write(os.path.join(self.tmp, "a.txt"), "a.txt")
+            z.write(os.path.join(self.tmp, "sub", "c.txt"), "sub/c.txt")
+            z.write(os.path.join(self.tmp, "sub", "deep", "d.bin"),
+                    "sub/deep/d.bin")
+        from sphaera_commander.panel import FilePanel
+
+        self.panel = FilePanel()
+        self.panel.cd(self.tmp)
+        self.panel.wait_loaded()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_enter_archive_and_navigate(self):
+        # Enter на файле архива -> корень архива
+        self.panel.cd(self.arc)
+        self.panel.wait_loaded()
+        self.assertTrue(self.panel.is_vfs)
+        self.assertEqual(self.panel.current_path(), f"{self.arc}::")
+        names = [self.panel.model.entry_at(r).name
+                 for r in range(1, self.panel.model.row_count())]
+        self.assertEqual(names, ["sub", "a.txt"])  # каталоги первыми
+
+        # вход в подкаталог
+        sub_row = next(r for r in range(1, self.panel.model.row_count())
+                       if self.panel.model.entry_at(r).name == "sub")
+        entry = self.panel.model.entry_at(sub_row)
+        self.panel._on_entry_activated(entry)
+        self.panel.wait_loaded()
+        self.assertEqual(self.panel.current_path(), f"{self.arc}::sub")
+        inner = [self.panel.model.entry_at(r).name
+                 for r in range(1, self.panel.model.row_count())]
+        self.assertEqual(inner, ["deep", "c.txt"])
+
+        # up из подкаталога -> корень архива; up из корня -> каталог архива
+        self.panel.up()
+        self.panel.wait_loaded()
+        self.assertEqual(self.panel.current_path(), f"{self.arc}::")
+        self.panel.up()
+        self.panel.wait_loaded()
+        self.assertFalse(self.panel.is_vfs)
+        self.assertEqual(self.panel.current_path(), self.tmp)
+
+    def test_extract_member_via_browser(self):
+        self.panel.cd(self.arc)
+        self.panel.wait_loaded()
+        browser = self.panel.vfs
+        dest = os.path.join(self.tmp, "out")
+        os.makedirs(dest)
+        res = browser.extract_members(["a.txt"], dest, lambda *_: None,
+                                      lambda: False)
+        self.assertEqual(res.errors, [])
+        self.assertTrue(os.path.isfile(os.path.join(dest, "a.txt")))
+
+
 if __name__ == "__main__":
     unittest.main()

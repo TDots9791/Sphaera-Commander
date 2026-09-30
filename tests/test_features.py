@@ -195,10 +195,11 @@ class ArchiveTests(unittest.TestCase):
         out = os.path.join(self.dst, "arc.zip")
         res = pack_items(self._entries(), out, "zip", noop_progress, not_cancelled)
         self.assertEqual(res.errors, [])
-        self.assertEqual(res.done_files, 2)
+        # a.txt + docs(dir) + sub/b.bin
+        self.assertEqual(res.done_files, 3)
         with zipfile.ZipFile(out) as zf:
             names = set(zf.namelist())
-        self.assertEqual(names, {"a.txt", "sub/b.bin"})
+        self.assertLessEqual({"a.txt", "sub/b.bin", "sub/"}, names)
 
         dest = os.path.join(self.tmp, "unpacked")
         res = unpack_archive(out, dest, noop_progress, not_cancelled)

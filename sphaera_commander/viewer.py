@@ -84,6 +84,7 @@ class FileViewerDialog(QDialog):
         self.editable = editable
         self.encoding = "utf-8"
         self._image: QPixmap | None = None
+        self.saved_on_close = False
 
         self.setModal(True)
         self.resize(900, 640)
@@ -246,6 +247,7 @@ class FileViewerDialog(QDialog):
                 self._save()
                 if self.text_edit.document().isModified():
                     return  # сохранение не удалось — остаёмся
+                self.saved_on_close = True
         super().reject()
 
     def keyPressEvent(self, event):

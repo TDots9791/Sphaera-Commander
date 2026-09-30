@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import threading
 import time
+import tarfile
+import zipfile
 
 from PySide6.QtCore import QFileSystemWatcher, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .archives import ArchiveBrowser, archive_format, norm_member
 from .fsmodel import (
     FileEntry,
     FileTableModel,
@@ -114,6 +117,8 @@ class FilePanel(QWidget):
         self._pending = ""
         self._loading = False
         self._reveal_name: str | None = None
+        self._vfs: ArchiveBrowser | None = None
+        self._vfs_dir = ""
 
         self.path_combo = QComboBox()
         self.path_combo.setInsertPolicy(QComboBox.NoInsert)
@@ -143,6 +148,7 @@ class FilePanel(QWidget):
 
         self._watcher = QFileSystemWatcher(self)
         self._watcher.directoryChanged.connect(self._on_dir_changed)
+        self._watcher.fileChanged.connect(self._on_dir_changed)
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(150)
@@ -158,22 +164,70 @@ class FilePanel(QWidget):
     def current_path(self) -> str:
         return self.model.path
 
+    @property
+    def is_vfs(self) -> bool:
+        return self._vfs is not None
+
+    @property
+    def vfs(self) -> ArchiveBrowser | None:
+        return self._vfs
+
     def cd(self, path: str, quiet: bool = False) -> bool:
+        if "::" in path:
+            archive, _, inner = path.partition("::")
+            return self._cd_vfs(archive, inner, quiet)
         target = os.path.abspath(os.path.expanduser(path))
+        if os.path.isfile(target) and archive_format(target):
+            return self._cd_vfs(target, "", quiet)
+        self._vfs = None
+        self._vfs_dir = ""
         if not os.path.isdir(target):
             if not quiet:
                 QMessageBox.warning(self, "Переход", f"Каталог не найден:\n{target}")
             return False
-        if self._watcher.directories():
-            self._watcher.removePaths(self._watcher.directories())
-        self._watcher.addPath(target)
+        self._rewatch(target)
         self._pending = target
         self._gen += 1
         self.path_changed.emit(target)
         self._start_scan(target, self._gen)
         return True
 
+    def _cd_vfs(self, archive: str, inner: str, quiet: bool) -> bool:
+        archive = os.path.abspath(os.path.expanduser(archive))
+        try:
+            if self._vfs is None or self._vfs.archive_path != archive:
+                self._vfs = ArchiveBrowser(archive)
+            self._vfs.list_dir(inner)  # проверка существования каталога
+        except (ValueError, OSError, KeyError,
+                zipfile.BadZipFile, tarfile.TarError) as exc:
+            self._vfs = None
+            self._vfs_dir = ""
+            if not quiet:
+                QMessageBox.warning(self, "Архив", f"Не удалось открыть:\n{exc}")
+            return False
+        self._vfs_dir = norm_member(inner)
+        self._rewatch(archive)
+        self._pending = f"{archive}::{self._vfs_dir}"
+        self._gen += 1
+        self.path_changed.emit(self._pending)
+        self._start_scan(self._pending, self._gen)
+        return True
+
+    def _rewatch(self, path: str) -> None:
+        if self._watcher.directories():
+            self._watcher.removePaths(self._watcher.directories())
+        if self._watcher.files():
+            self._watcher.removePaths(self._watcher.files())
+        self._watcher.addPath(path)
+
     def up(self) -> None:
+        if self._vfs is not None:
+            if self._vfs_dir:
+                parent = self._vfs_dir.rsplit("/", 1)[0] if "/" in self._vfs_dir else ""
+                self._cd_vfs(self._vfs.archive_path, parent, quiet=True)
+            else:
+                self.cd(os.path.dirname(self._vfs.archive_path))
+            return
         parent = os.path.dirname(self.current_path())
         if parent != self.current_path():
             self.cd(parent)
@@ -201,15 +255,40 @@ class FilePanel(QWidget):
         self._loading = True
         self.update_status()
 
-        def worker():
-            try:
-                entries = scan_directory(path, show_hidden)
-                sort_entries(entries, col, desc)
-                error = ""
-            except OSError as exc:
-                entries, error = [], str(exc)
-            self.loaded.emit({"gen": gen, "path": path,
-                              "entries": entries, "error": error})
+        if "::" in path:
+            archive, _, inner = path.partition("::")
+            browser = self._vfs
+            if browser is None or browser.archive_path != archive:
+                try:
+                    browser = ArchiveBrowser(archive)
+                except (ValueError, OSError, zipfile.BadZipFile,
+                        tarfile.TarError) as exc:
+                    self._loading = False
+                    self.loaded.emit({"gen": gen, "path": path, "entries": [],
+                                      "error": str(exc)})
+                    return
+                self._vfs = browser
+
+            def worker():
+                try:
+                    entries = browser.list_dir(inner, show_hidden)
+                    sort_entries(entries, col, desc)
+                    error = ""
+                except (KeyError, OSError, ValueError,
+                        zipfile.BadZipFile, tarfile.TarError) as exc:
+                    entries, error = [], str(exc)
+                self.loaded.emit({"gen": gen, "path": path,
+                                  "entries": entries, "error": error})
+        else:
+            def worker():
+                try:
+                    entries = scan_directory(path, show_hidden)
+                    sort_entries(entries, col, desc)
+                    error = ""
+                except OSError as exc:
+                    entries, error = [], str(exc)
+                self.loaded.emit({"gen": gen, "path": path,
+                                  "entries": entries, "error": error})
 
         threading.Thread(target=worker, daemon=True, name="panel-scan").start()
 
@@ -247,6 +326,8 @@ class FilePanel(QWidget):
             return
         if entry.is_dir:
             self.cd(entry.path)
+        elif not self.is_vfs and archive_format(entry.path):
+            self.cd(entry.path)  # вход в архив с диска (VFS)
         else:
             self.entry_activated.emit(entry)
 

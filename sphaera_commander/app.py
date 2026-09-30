@@ -5,8 +5,12 @@ from __future__ import annotations
 
 import os
 import shlex
+import shutil
 import sys
+import tarfile
+import tempfile
 import threading
+import zipfile
 
 from PySide6.QtCore import QObject, QProcess, QStorageInfo, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
@@ -26,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, config
-from .archives import archive_format, pack_items, unpack_archive
+from .archives import ArchiveBrowser, archive_format, pack_items, unpack_archive
 from .dialogs import (
     BatchRenameDialog,
     OverwriteAskDialog,
@@ -133,6 +137,7 @@ class MainWindow(QMainWindow):
         self._bridge = _ConfirmBridge(self)
         self._bridge.confirmRequested.connect(self._on_confirm)
         self._queue: list[dict] = []
+        self._temp_dir: str | None = None
 
         fnbar = QWidget()
         fn_layout = QHBoxLayout(fnbar)
@@ -180,6 +185,8 @@ class MainWindow(QMainWindow):
             lambda pos, p=self.left: self._context_menu(p, pos))
         self.right.view.context_requested.connect(
             lambda pos, p=self.right: self._context_menu(p, pos))
+        self.left.entry_activated.connect(self._open_entry)
+        self.right.entry_activated.connect(self._open_entry)
         self.left.path_changed.connect(lambda _p: self._update_title())
         self.right.path_changed.connect(lambda _p: self._update_title())
         self._update_title()
@@ -358,36 +365,78 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------- просмотр/правка
 
-    def _viewer_files(self) -> tuple[str | None, list[str]]:
+    def _ensure_temp(self) -> str:
+        if self._temp_dir is None:
+            self._temp_dir = tempfile.mkdtemp(prefix="sphaera-")
+        return self._temp_dir
+
+    def _open_entry(self, entry) -> None:
+        """Enter на файле: открыть системным приложением (для члена архива — через temp)."""
+        if entry is None or entry.is_dir:
+            return
+        if "::" in entry.path:
+            archive, _, member = entry.path.partition("::")
+            try:
+                browser = ArchiveBrowser(archive)
+                tmp = browser.extract_member_to_temp(member, self._ensure_temp())
+            except (ValueError, OSError, KeyError,
+                    zipfile.BadZipFile, tarfile.TarError) as exc:
+                QMessageBox.warning(self, "Архив", f"Не удалось извлечь:\n{exc}")
+                return
+            QDesktopServices.openUrl(QUrl.fromLocalFile(tmp))
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(entry.path))
+
+    def _viewer_targets(self) -> tuple[str | None, list[str], ArchiveBrowser | None, str]:
+        """(файл, список для навигации, браузер архива, член архива)."""
         entry = self.active.current_entry()
         if entry is None or entry.is_dir:
-            return None, []
+            return None, [], None, ""
+        if "::" in entry.path:
+            archive, _, member = entry.path.partition("::")
+            try:
+                browser = ArchiveBrowser(archive)
+                tmp = browser.extract_member_to_temp(member, self._ensure_temp())
+            except (ValueError, OSError, KeyError,
+                    zipfile.BadZipFile, tarfile.TarError) as exc:
+                QMessageBox.warning(self, "Архив", f"Не удалось извлечь:\n{exc}")
+                return None, [], None, ""
+            return tmp, [tmp], browser, member
         files = [e.path for e in self.active.model.entries if not e.is_dir]
-        return entry.path, files
+        return entry.path, files, None, ""
 
     def open_viewer_cmd(self):
-        path, files = self._viewer_files()
+        path, files, _browser, _member = self._viewer_targets()
         if path is None:
             self._status("Нет файла под курсором")
             return
         open_viewer(self, path, files, editable=False).exec()
 
     def open_editor_cmd(self):
-        path, files = self._viewer_files()
+        path, files, browser, member = self._viewer_targets()
         if path is None:
             self._status("Нет файла под курсором")
             return
-        try:
-            with open(path, "rb") as f:
-                head = f.read(8192)
-        except OSError as exc:
-            QMessageBox.warning(self, "Правка", f"Не удалось открыть файл:\n{exc}")
-            return
-        if looks_binary(head):
-            QMessageBox.information(
-                self, "Правка", "Похоже, файл бинарный — встроенный редактор его не открывает.")
-            return
-        open_viewer(self, path, files, editable=True).exec()
+        if browser is None:
+            try:
+                with open(path, "rb") as f:
+                    head = f.read(8192)
+            except OSError as exc:
+                QMessageBox.warning(self, "Правка", f"Не удалось открыть файл:\n{exc}")
+                return
+            if looks_binary(head):
+                QMessageBox.information(
+                    self, "Правка",
+                    "Похоже, файл бинарный — встроенный редактор его не открывает.")
+                return
+        dlg = open_viewer(self, path, files, editable=True)
+        dlg.exec()
+        if browser is not None and dlg.saved_on_close:
+            self._enqueue_op(
+                f"Запись в архив {os.path.basename(browser.archive_path)}",
+                lambda progress_cb, is_cancelled:
+                browser.replace_member(member, path),
+                after=self.refresh_all)
 
     def open_system(self):
         entry = self.active.current_entry()
@@ -468,6 +517,12 @@ class MainWindow(QMainWindow):
         self._start_copy_move(move=True)
 
     def _start_copy_move(self, move: bool):
+        if self.active.is_vfs:
+            self._extract_selected(move=move)
+            return
+        if self._other().is_vfs:
+            self._status("Архив в панели назначения открыт только для чтения")
+            return
         sources = self.active.selected_entries()
         if not sources:
             self._status("Нет отмеченных объектов (Insert — отметить)")
@@ -487,14 +542,44 @@ class MainWindow(QMainWindow):
         kind = KIND_MOVE if move else KIND_COPY
         title = "Перенос" if move else "Копирование"
         self._enqueue_op(title, self._fs_fn(kind, plan, sources),
-                         after=self._after_copy_move(move))
+                         after=lambda m=move: self._after_copy_move(m))
 
     def _after_copy_move(self, move: bool):
         self.refresh_all()
         if move:
             self.active.model.clear_marks()
 
+    def _extract_selected(self, move: bool) -> None:
+        """Извлечение выбранных членов архива в противоположную панель (F5/F6)."""
+        panel = self.active
+        browser = panel.vfs
+        sources = panel.selected_entries()
+        if not sources or browser is None:
+            self._status("Нет отмеченных объектов (Insert — отметить)")
+            return
+        if self._other().is_vfs:
+            self._status("Извлечение в другой архив не поддерживается")
+            return
+        members = [e.path.partition("::")[2] for e in sources]
+        dest = self._other().current_path()
+        title = "Перенос из архива" if move else "Извлечение из архива"
+        extract_fn = (lambda progress_cb, is_cancelled:
+                      browser.extract_members(members, dest, progress_cb,
+                                              is_cancelled,
+                                              ask_cb=self._bridge.ask))
+        if move:
+            self._enqueue_op(title, extract_fn)
+            self._enqueue_op(
+                f"Удаление из {os.path.basename(browser.archive_path)}",
+                lambda progress_cb, is_cancelled: browser.delete_members(members),
+                after=self.refresh_all)
+        else:
+            self._enqueue_op(title, extract_fn, after=self.refresh_all)
+
     def do_delete(self):
+        if self.active.is_vfs:
+            self._delete_in_archive()
+            return
         sources = self.active.selected_entries()
         if not sources:
             self._status("Нет отмеченных объектов (Insert — отметить)")
@@ -504,7 +589,25 @@ class MainWindow(QMainWindow):
         self._enqueue_op("Удаление", self._fs_fn(KIND_DELETE, None, sources),
                          after=self.refresh_all)
 
+    def _delete_in_archive(self) -> None:
+        panel = self.active
+        browser = panel.vfs
+        sources = panel.selected_entries()
+        if not sources or browser is None:
+            self._status("Нет отмеченных объектов (Insert — отметить)")
+            return
+        if not confirm_delete(self, sources, panel.current_path()):
+            return
+        members = [e.path.partition("::")[2] for e in sources]
+        self._enqueue_op(
+            f"Удаление из {os.path.basename(browser.archive_path)}",
+            lambda progress_cb, is_cancelled: browser.delete_members(members),
+            after=self.refresh_all)
+
     def do_pack(self):
+        if self.active.is_vfs:
+            self._status("Сначала извлеките объекты из архива")
+            return
         sources = self.active.selected_entries()
         if not sources:
             self._status("Нет отмеченных объектов (Insert — отметить)")
@@ -548,6 +651,9 @@ class MainWindow(QMainWindow):
 
     def do_batch_rename(self):
         panel = self.active
+        if panel.is_vfs:
+            self._status("Групповое переименование в архиве не поддерживается")
+            return
         names = [e.name for e in panel.selected_entries()]
         if not names:
             self._status("Нет объектов для переименования")
@@ -585,6 +691,9 @@ class MainWindow(QMainWindow):
             self._status(f"Переименовано: {done}")
 
     def compare_dirs(self):
+        if self.left.is_vfs or self.right.is_vfs:
+            self._status("Сравнение каталогов работает для обычных каталогов")
+            return
         left = {e.name: e for e in self.left.model.entries if not e.is_dir}
         right = {e.name: e for e in self.right.model.entries if not e.is_dir}
         diff_left, diff_right = compare_name_sets(left, right)
@@ -595,6 +704,9 @@ class MainWindow(QMainWindow):
 
     def do_mkdir(self):
         panel = self.active
+        if panel.is_vfs:
+            self._status("Создание папок в архиве не поддерживается")
+            return
         name, ok = QInputDialog.getText(self, "Новая папка", "Имя папки:", text="")
         if not ok or not name.strip():
             return
@@ -608,6 +720,9 @@ class MainWindow(QMainWindow):
 
     def do_rename(self):
         panel = self.active
+        if panel.is_vfs:
+            self._status("Переименование в архиве не поддерживается")
+            return
         entry = panel.current_entry()
         if entry is None:
             self._status("Нет объекта под курсором")
@@ -637,7 +752,10 @@ class MainWindow(QMainWindow):
                 self._status(f"cd: {exc}")
                 return
             target = parts[1] if len(parts) > 1 else "~"
-            base = self.active.current_path()
+            if self.active.is_vfs:
+                base = os.path.dirname(self.active.vfs.archive_path)
+            else:
+                base = self.active.current_path()
             resolved = os.path.abspath(os.path.expanduser(
                 target if os.path.isabs(target) else os.path.join(base, target)))
             if self.active.cd(resolved, quiet=True):
@@ -702,6 +820,8 @@ class MainWindow(QMainWindow):
         config.save_panel(self.left, "left")
         config.save_panel(self.right, "right")
         config.save_cmd_history(self.cmdline.history)
+        if self._temp_dir is not None:
+            shutil.rmtree(self._temp_dir, ignore_errors=True)
         event.accept()
 
 
