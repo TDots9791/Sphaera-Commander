@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Sphaera Commander
+GenericName=File Manager
+Comment=Двухпанельный файловый менеджер в духе Total Commander
+Exec=sphaera-commander
+Icon=sphaera-commander
+Terminal=false
+Categories=System;FileManager;Utility;
+Keywords=file;manager;commander;панель;файлы;
+StartupWMClass=Sphaera Commander
