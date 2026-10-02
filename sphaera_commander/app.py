@@ -361,7 +361,20 @@ class MainWindow(QMainWindow):
             menu.addAction(self._find_action(title))
         menu.addSeparator()
         menu.addAction(self._find_action("Открыть системным приложением"))
+        menu.addAction("Копировать полный путь",
+                       lambda: self._copy_paths(panel))
         menu.exec(panel.view.viewport().mapToGlobal(pos))
+
+    def _copy_paths(self, panel: FilePanel) -> None:
+        """Полные пути отмеченных объектов (или под курсором/панели) в буфер обмена."""
+        entries = panel.selected_entries()
+        if entries:
+            text = "\n".join(e.path for e in entries)
+            self._status(f"Скопировано путей: {len(entries)}")
+        else:
+            text = panel.current_path()
+            self._status("Путь панели скопирован в буфер обмена")
+        QApplication.clipboard().setText(text)
 
     # ------------------------------------------------------------- просмотр/правка
 

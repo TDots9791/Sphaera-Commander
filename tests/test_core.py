@@ -441,3 +441,45 @@ class PanelVfsTests(QtTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class CopyPathsTests(QtTestCase):
+    """«Копировать полный путь» из контекстного меню."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sc_copy_")
+        build_tree(self.tmp)
+        from sphaera_commander.app import MainWindow
+
+        self.win = MainWindow()
+        self.win.left.cd(self.tmp)
+        self.win.left.wait_loaded()
+        self.win._set_active(self.win.left)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_copy_marked_paths(self):
+        from PySide6.QtWidgets import QApplication
+
+        self.win.left.model.set_mark("a.txt", True)
+        self.win.left.model.set_mark("b.log", True)
+        self.win._copy_paths(self.win.left)
+        lines = QApplication.clipboard().text().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn(os.path.join(self.tmp, "a.txt"), lines)
+        self.assertIn(os.path.join(self.tmp, "b.log"), lines)
+
+    def test_copy_cursor_fallback(self):
+        from PySide6.QtWidgets import QApplication
+
+        self.win.left.view.set_current_row(1)
+        entry = self.win.left.model.entry_at(1)
+        self.win._copy_paths(self.win.left)
+        self.assertEqual(QApplication.clipboard().text(), entry.path)
+
+    def test_copy_panel_path_when_cursor_on_dotdot(self):
+        from PySide6.QtWidgets import QApplication
+
+        self.win.left.view.set_current_row(0)  # '..'
+        self.win._copy_paths(self.win.left)
+        self.assertEqual(QApplication.clipboard().text(), self.tmp)
