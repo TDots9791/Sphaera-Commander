@@ -10,6 +10,7 @@ import unittest.mock
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QMessageBox, QPlainTextEdit  # noqa: E402
 
 from sphaera_commander.viewer import (  # noqa: E402
@@ -170,6 +171,150 @@ class TextViewTests(ViewerBase):
         self.assertEqual(dlg.kind, "text")
         self.assertTrue(dlg.btn_format.isHidden())
         self.assertNotIn("JSON", dlg.lbl_info.text())
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class EditorUpgradeTests(ViewerBase):
+    """Номера строк, замена, переход на строку, позиция курсора, Ctrl+E."""
+
+    def _editor(self, content: str, name: str = "e.txt") -> FileViewerDialog:
+        path = write(os.path.join(self.tmp, name), content)
+        return FileViewerDialog(None, [path], 0, editable=True)
+
+    def test_line_number_area_and_width(self):
+        dlg = self._editor("строка\n" * 120)
+        self.assertTrue(dlg.text_edit.line_number_width() > 20)
+        # 120 строк — ширина больше, чем у 2 строк
+        dlg2 = self._editor("одна\n")
+        self.assertGreater(dlg.text_edit.line_number_width(),
+                           dlg2.text_edit.line_number_width())
+
+    def test_replace_one_and_all(self):
+        dlg = self._editor("кот, кот, кот")
+        dlg.search.setText("кот")
+        dlg.replace_edit.setText("пёс")
+        dlg._replace_one()
+        self.assertEqual(dlg.text_edit.toPlainText(), "пёс, кот, кот")
+        dlg._replace_all()
+        self.assertEqual(dlg.text_edit.toPlainText(), "пёс, пёс, пёс")
+
+    def test_replace_all_no_self_loop(self):
+        dlg = self._editor("a b a")
+        dlg.search.setText("a")
+        dlg.replace_edit.setText("aa")
+        dlg._replace_all()
+        self.assertEqual(dlg.text_edit.toPlainText(), "aa b aa")
+
+    def test_replace_missing_reports(self):
+        dlg = self._editor("текст")
+        dlg.search.setText("нет-такого")
+        dlg.replace_edit.setText("x")
+        dlg._replace_all()
+        self.assertIn("заменено: 0", dlg.lbl_info.text())
+
+    def test_goto_line_moves_cursor(self):
+        dlg = self._editor("\n".join(f"строка {i}" for i in range(1, 51)))
+        dlg._goto_line(42)
+        cursor = dlg.text_edit.textCursor()
+        self.assertEqual(cursor.blockNumber(), 41)
+        self.assertIn("строка 42", cursor.block().text())
+
+    def test_cursor_status_updates(self):
+        dlg = self._editor("первая\nвторая")
+        dlg._goto_line(2)
+        self.assertEqual(dlg.lbl_pos.text(), "строка 2, столбец 1")
+
+    def test_monospace_font(self):
+        from PySide6.QtGui import QFontDatabase
+
+        dlg = self._editor("x")
+        expected = QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+        self.assertEqual(dlg.text_edit.font().family(), expected)
+
+    def test_ctrl_e_external(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+
+        dlg = self._editor("x")
+        with unittest.mock.patch.object(QDesktopServices, "openUrl") as mock:
+            dlg._open_external()
+        self.assertEqual(mock.call_count, 1)
+        self.assertIsInstance(mock.call_args[0][0], QUrl)
+
+    def test_replace_row_hidden_until_toggled(self):
+        dlg = self._editor("x")
+        self.assertTrue(dlg.replace_row.isHidden())
+        dlg.btn_replace_toggle.setChecked(True)
+        self.assertFalse(dlg.replace_row.isHidden())
+
+
+class JsonTreeTests(ViewerBase):
+    def test_tree_build_and_toggle(self):
+        path = write(os.path.join(self.tmp, "d.json"),
+                     '{"объект": {"внутри": 1}, "список": [10, 20], "число": 5}')
+        dlg = FileViewerDialog(None, [path], 0, editable=False)
+        self.assertTrue(dlg.btn_tree.isHidden() is False)
+        dlg.btn_tree.setChecked(True)
+        self.assertEqual(dlg.stack.currentIndex(), 2)
+        tree = dlg.tree
+        self.assertEqual(tree.topLevelItemCount(), 3)
+        names = [tree.topLevelItem(i).text(0) for i in range(3)]
+        self.assertEqual(names, ["объект", "список", "число"])
+        obj_item = tree.topLevelItem(0)
+        self.assertEqual(obj_item.childCount(), 1)
+        self.assertEqual(obj_item.child(0).text(1), "1")
+        lst = tree.topLevelItem(1)
+        self.assertEqual([lst.child(i).text(1) for i in range(2)], ["10", "20"])
+        # обратно к тексту
+        dlg.btn_tree.setChecked(False)
+        self.assertEqual(dlg.stack.currentIndex(), 0)
+
+    def test_tree_invalid_json_stays_in_text(self):
+        path = write(os.path.join(self.tmp, "bad.json"), "{oops")
+        dlg = FileViewerDialog(None, [path], 0, editable=False)
+        dlg.btn_tree.setChecked(True)
+        self.assertEqual(dlg.stack.currentIndex(), 0)  # не переключились
+        self.assertIn("дерева нет", dlg.lbl_info.text())
+
+    def test_tree_rebuilds_after_format(self):
+        path = write(os.path.join(self.tmp, "d.json"), '{"k": [1]}')
+        dlg = FileViewerDialog(None, [path], 0, editable=False)
+        dlg.btn_tree.setChecked(True)
+        dlg.btn_tree.setChecked(False)
+        dlg.btn_format.click()
+        dlg.btn_tree.setChecked(True)
+        self.assertEqual(dlg.tree.topLevelItemCount(), 1)
+
+
+class MarkdownTableTests(ViewerBase):
+    def test_table_reconstructed_with_borders_and_header(self):
+        path = write(os.path.join(
+            self.tmp, "doc.md"),
+            "| Имя | Цена |\n|-----|------|\n| Хлеб | 50 |\n| Молоко | 90 |\n")
+        dlg = FileViewerDialog(None, [path], 0, editable=False)
+        self.assertEqual(dlg.stack.currentIndex(), 1)
+        from sphaera_commander.viewer import find_markdown_tables
+
+        tables = find_markdown_tables(dlg.preview.document())
+        self.assertEqual(len(tables), 1)
+        self.assertEqual(tables[0].rows(), 3)
+        self.assertEqual(tables[0].columns(), 2)
+        fmt = tables[0].format()
+        self.assertEqual(fmt.border(), 1.0)
+        # шапка жирная: у первой ячейки есть жирный формат
+        cell = tables[0].cellAt(0, 0)
+        cursor = cell.firstCursorPosition()
+        self.assertEqual(cursor.charFormat().fontWeight(), QFont.Bold)
+
+    def test_plain_md_without_tables_unchanged(self):
+        path = write(os.path.join(self.tmp, "doc.md"), "# Просто заголовок\n")
+        dlg = FileViewerDialog(None, [path], 0, editable=False)
+        from sphaera_commander.viewer import find_markdown_tables
+
+        self.assertEqual(find_markdown_tables(dlg.preview.document()), [])
 
 
 if __name__ == "__main__":

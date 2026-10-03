@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
         act("Запаковать…", "Alt+F5", self.do_pack)
         act("Распаковать…", "Alt+F6", self.do_unpack)
         act("Сравнить каталоги", "Shift+F2", self.compare_dirs)
-        act("Открыть системным приложением", None, self.open_system)
+        act("Открыть системным приложением", "Ctrl+E", self.open_system)
         act("Обновить", "Ctrl+R", self.refresh_all)
         self.act_hidden = act("Скрытые файлы", "Ctrl+H",
                               lambda: self.toggle_hidden(), checkable=True)
