@@ -21,8 +21,11 @@ from html import escape
 DOC_KINDS = {
     ".pdf": "pdf",
     ".docx": "docx",
+    ".doc": "doc",
+    ".rtf": "rtf",
     ".xlsx": "xlsx",
     ".xlsm": "xlsx",
+    ".xls": "xls",
     ".pptx": "pptx",
     ".csv": "csv",
     ".tsv": "csv",

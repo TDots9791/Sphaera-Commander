@@ -620,9 +620,12 @@ class MainWindow(QMainWindow):
             return
         doc_kind = pv.document_kind(path)
         if doc_kind is not None:
-            # форматы со встроенной обработкой: pdf/docx редактируются,
-            # остальные (xlsx/pptx/csv/html/xml/fb2/epub) — только просмотр
-            open_viewer(self, path, files, editable=doc_kind in ("pdf", "docx")).exec()
+            # форматы со встроенной обработкой: pdf/docx/rtf/doc/xls
+            # редактируются, остальные (xlsx/pptx/csv/html/xml/fb2/epub) —
+            # только просмотр
+            open_viewer(self, path, files,
+                        editable=doc_kind in ("pdf", "docx", "rtf", "doc",
+                                              "xls")).exec()
             return
         if browser is None:
             try:
@@ -1100,7 +1103,8 @@ def _selfcheck() -> int:
     """Импорт всех форматных библиотек (для проверки замороженной сборки)."""
     import importlib
 
-    modules = ("pypdfium2", "pypdf", "docx", "mammoth", "openpyxl", "pptx")
+    modules = ("pypdfium2", "pypdf", "docx", "mammoth", "openpyxl", "pptx",
+               "xlrd", "xlwt", "striprtf")
     failed = []
     for name in modules:
         try:

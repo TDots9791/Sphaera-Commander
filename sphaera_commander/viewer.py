@@ -76,6 +76,7 @@ from PySide6.QtWidgets import (
 
 from . import previewers as pv
 from . import slide_render
+from . import legacy_formats as lf
 
 TEXT_LIMIT = 16 * 1024 * 1024   # показываем не больше 16 МиБ текста
 HEX_LIMIT = 2 * 1024 * 1024     # и 2 МиБ hex-обзора
@@ -293,6 +294,29 @@ class SheetModel(QAbstractTableModel):
         super().__init__(parent)
         self._rows: list[list[str]] = []
         self._cols = 0
+        self.editable = False
+        self.dirty = False
+
+    def rows(self) -> list[list[str]]:
+        return self._rows
+
+    def flags(self, index):
+        base = super().flags(index)
+        if self.editable and index.isValid():
+            return base | Qt.ItemIsEditable
+        return base
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if not (self.editable and index.isValid()
+                and role == Qt.EditRole):
+            return False
+        row = self._rows[index.row()]
+        while len(row) <= index.column():
+            row.append("")
+        row[index.column()] = str(value)
+        self.dirty = True
+        self.dataChanged.emit(index, index)
+        return True
 
     def reset_rows(self) -> None:
         self.beginResetModel()
@@ -354,6 +378,7 @@ class FileViewerDialog(QDialog):
         self._sheets: list[tuple[str, list[list[str]]]] = []
         self._temp_dirs: list[str] = []
         self._grid_sources: list[tuple] = []
+        self._xls_sheets_cache: list[tuple[str, list[list[str]]]] = []
         self._deck: dict | None = None
         self._slides_text: list[tuple[int, str]] = []
         self.gridBatch.connect(self._on_grid_batch)
@@ -680,6 +705,9 @@ class FileViewerDialog(QDialog):
             loader = {
                 "pdf": self._load_pdf,
                 "docx": self._load_docx,
+                "doc": self._load_doc,
+                "rtf": self._load_rtf,
+                "xls": self._load_xls,
                 "xlsx": self._load_xlsx,
                 "pptx": self._load_pptx,
                 "csv": self._load_csv,
@@ -896,6 +924,50 @@ class FileViewerDialog(QDialog):
             _title, html = item
             self.preview.setHtml(html)
 
+    # rtf / doc / xls ---------------------------------------------------------
+
+    def _load_rtf(self, path: str) -> None:
+        self.kind = "rtf"
+        self.btn_wrap.show()
+        text = lf.rtf_to_text(path)
+        self.text_edit.setPlainText(text)
+        self.text_edit.setReadOnly(not self.editable)
+        self.stack.setCurrentIndex(0)
+        self._info_base = "RTF • правка: абзацы (форматирование упрощается)"
+        self.lbl_info.setText(self._info_base if self.editable
+                              else "RTF • просмотр • F4 — правка")
+        self._update_cursor_status()
+
+    def _load_doc(self, path: str) -> None:
+        self.kind = "doc"
+        self.btn_wrap.show()
+        text = lf.doc_to_text(path)
+        self.text_edit.setPlainText(text)
+        self.text_edit.setReadOnly(not self.editable)
+        self.stack.setCurrentIndex(0)
+        self._info_base = "DOC • текст"
+        self.lbl_info.setText(
+            "DOC • правка: Ctrl+S предложит сохранить как RTF/DOCX"
+            if self.editable else "DOC • просмотр (antiword/catdoc) • F4 — правка")
+        self._update_cursor_status()
+
+    def _load_xls(self, path: str) -> None:
+        self.kind = "xls"
+        sheets = lf.xls_sheets(path)
+        if not sheets:
+            raise ValueError("в книге нет листов")
+        self._xls_sheets_cache = sheets
+        self._grid_sources = [("rows", name, rows) for name, rows in sheets]
+        self.sheet_combo.blockSignals(True)
+        self.sheet_combo.clear()
+        for name, _rows in sheets:
+            self.sheet_combo.addItem(name)
+        self.sheet_combo.blockSignals(False)
+        self.sheet_combo.setVisible(len(sheets) > 1)
+        self.sheet_model.editable = self.editable
+        self._select_sheet(0, info_base="XLS")
+        self.stack.setCurrentIndex(4)
+
     # xlsx / csv ---------------------------------------------------------------
 
     def _load_xlsx(self, path: str) -> None:
@@ -926,6 +998,13 @@ class FileViewerDialog(QDialog):
         if not 0 <= index < len(self._grid_sources):
             return
         kind, a, b = self._grid_sources[index]
+        if kind == "rows":
+            self.sheet_model.reset_rows()
+            self._grid_info_base = info_base
+            self.sheet_model.append_rows(b)
+            self.lbl_info.setText((info_base + " • " if info_base else "")
+                                  + f"строк: {self.sheet_model.rowCount()}")
+            return
         if kind == "xlsx":
             factory = lambda: pv.xlsx_rows_iter(a, b)  # noqa: E731
             title = b
@@ -1245,6 +1324,62 @@ class FileViewerDialog(QDialog):
             return
         path = self.files[self.index]
         text = self.text_edit.toPlainText()
+        if self.kind == "xls":
+            ret = QMessageBox.question(
+                self, "Сохранение XLS",
+                "Формулы и стили будут заменены значениями. Продолжить?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ret != QMessageBox.Yes:
+                return
+            current = self.sheet_combo.currentIndex()
+            sheets_out = []
+            for i, (name, data) in enumerate(self._xls_sheets_cache):
+                rows = (self.sheet_model.rows()
+                        if i == current else data)
+                sheets_out.append((name, [list(r) for r in rows]))
+            try:
+                lf.xls_save(path, sheets_out)
+            except Exception as exc:
+                QMessageBox.critical(self, "Ошибка",
+                                     f"Не удалось сохранить XLS:\n{exc}")
+                return
+            self.sheet_model.dirty = False
+            self.lbl_info.setText("сохранено (XLS, значения)")
+            return
+        if self.kind == "rtf":
+            try:
+                lf.save_rtf(path, text.splitlines())
+            except OSError as exc:
+                QMessageBox.critical(self, "Ошибка",
+                                     f"Не удалось сохранить RTF:\n{exc}")
+                return
+            self.text_edit.document().setModified(False)
+            self.lbl_info.setText("сохранено (RTF)")
+            return
+        if self.kind == "doc":
+            base = os.path.splitext(path)[0]
+            out, _flt = QFileDialog.getSaveFileName(
+                self, "Двоичный DOC перезаписать нельзя — сохранить как",
+                base + ".rtf", "RTF (*.rtf);;DOCX (*.docx)")
+            if not out:
+                return
+            try:
+                if out.lower().endswith(".docx"):
+                    from docx import Document
+
+                    d = Document()
+                    for line in text.splitlines():
+                        d.add_paragraph(line)
+                    d.save(out)
+                else:
+                    lf.save_rtf(out, text.splitlines())
+            except Exception as exc:
+                QMessageBox.critical(self, "Ошибка",
+                                     f"Не удалось сохранить:\n{exc}")
+                return
+            self.text_edit.document().setModified(False)
+            self.lbl_info.setText(f"сохранено: {os.path.basename(out)}")
+            return
         if self.kind == "docx":
             try:
                 pv.docx_save_paragraphs(path, text.splitlines())
@@ -1288,6 +1423,19 @@ class FileViewerDialog(QDialog):
             self._render_markdown(text)
 
     def reject(self) -> None:
+        grid_dirty = self.kind == "xls" and self.sheet_model.dirty
+        if grid_dirty:
+            ret = QMessageBox.question(
+                self, "Есть изменения",
+                "Таблица изменена. Сохранить XLS (формулы → значения)?",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Cancel)
+            if ret == QMessageBox.Cancel:
+                return
+            if ret == QMessageBox.Yes:
+                self._save()
+                if self.sheet_model.dirty:
+                    return
         if (self.editable and not self.text_edit.isReadOnly()
                 and self.text_edit.document().isModified()):
             ret = QMessageBox.question(
