@@ -5,7 +5,23 @@ Python 3.10+ / Qt 6 (PySide6).
 
 ![Скриншот](docs/screenshot.png)
 
-## Запуск
+## Установка в систему
+
+```sh
+./scripts/install.sh                # в профиль: ~/.local (команда, ярлык, иконки)
+sudo ./scripts/install.sh --system  # общесистемно: /opt + /usr/local/bin
+./scripts/install.sh --uninstall    # удалить пользовательскую установку
+```
+
+Установщик собирает standalone-версию (PyInstaller), кладёт команду
+`sphaera-commander`, ярлык в меню и назначает себя обработчиком папок
+(двойной клик по каталогу открывает Sphaera Commander вместо Nautilus).
+Вернуть Nautilus: `xdg-mime default org.gnome.Nautilus.desktop inode/directory`.
+
+Запуск с каталогами: `sphaera-commander /путь/слева /путь/справа`,
+`--version`. Обновление — просто повторный запуск `install.sh`.
+
+## Запуск из исходников
 
 ```sh
 ./run.sh
@@ -13,25 +29,12 @@ Python 3.10+ / Qt 6 (PySide6).
 .venv/bin/python -m sphaera_commander
 ```
 
-Установка с нуля:
-
-```sh
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/sphaera-commander
-```
-
-Ярлык в меню рабочего стола: `scripts/install-desktop.sh` (иконка + .desktop в `~/.local`).
-
-Сборки без Python-окружения:
-- `scripts/build_standalone.sh` → `dist/sphaera-commander/` (PyInstaller onedir)
-- `scripts/build_appimage.sh` → `dist/Sphaera_Commander-*-x86_64.AppImage`
-
 ## Возможности
 
 - Две панели, переключение по **Tab**; чтение каталогов — в фоне, интерфейс не блокируется
 - Навигация: Enter, Backspace — вверх, Alt+F1/F2 — диски и монтирования, Ctrl+U — поменять панели
-- **F5** копирование, **F6** перенос, **F7** папка, **F8** удаление, **Shift+F6** переименование,
+- **F7** папка, **F8** удаление **в корзину** (gio trash, восстанавливается
+  из Nautilus), **Shift+F8** — безвозвратно, **Shift+F6** переименование,
   **Ctrl+M** групповое переименование (шаблон + счётчик + предпросмотр)
 - **F3** встроенный просмотр и **F4** правка: текст с автоопределением кодировки
   (utf-8/utf-16/cp1251/latin-1), поиск, перенос строк, Alt+↑/↓ — соседние файлы.
@@ -68,7 +71,8 @@ python3 -m venv .venv
 | Insert / * / + / − | Отметки (вставка/инверсия/маска)  |
 | F3 / F4     | Просмотр / правка (встроенные)           |
 | F5 / F6     | Копирование / перенос                    |
-| F7 / F8     | Новая папка / удаление                   |
+| F7 / F8     | Новая папка / удаление в корзину         |
+| Shift+F8    | Удалить безвозвратно                     |
 | Shift+F6    | Переименование                           |
 | Ctrl+M      | Групповое переименование                 |
 | Alt+F5 / F6 | Запаковать / распаковать                 |

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from typing import Callable
@@ -469,6 +470,37 @@ def execute(kind: str, plan: Plan | None, sources: list, policy: str,
     assert plan is not None
     return execute_copy_move(plan, kind == KIND_MOVE, policy, progress_cb,
                              is_cancelled, ask_cb=ask_cb)
+
+
+def execute_trash(sources: list, progress_cb: Callable[[Progress], None],
+                  is_cancelled: Callable[[], bool]) -> OpResult:
+    """Переместить объекты в корзину (XDG) через gio trash; только реальные пути."""
+    result = OpResult()
+    gio = shutil.which("gio")
+    if gio is None:
+        result.errors.append(FileError("", "утилита gio не найдена — корзина недоступна"))
+        return result
+    items = [e for e in sources
+             if e.name != ".." and e.path and "::" not in e.path]
+    state = Progress(phase="run", current="", done_files=0,
+                     total_files=len(items), done_bytes=0, total_bytes=0)
+    progress_cb(state)
+    for entry in items:
+        if is_cancelled():
+            result.cancelled = True
+            return result
+        state.current = entry.path
+        progress_cb(state)
+        proc = subprocess.run([gio, "trash", "--", entry.path],
+                              capture_output=True, text=True)
+        if proc.returncode == 0:
+            result.done_files += 1
+        else:
+            message = (proc.stderr or "").strip() or "не удалось переместить в корзину"
+            result.errors.append(FileError(entry.path, message))
+        state.done_files = result.done_files
+        progress_cb(state)
+    return result
 
 
 # ---------------------------------------------------------------- поток Qt

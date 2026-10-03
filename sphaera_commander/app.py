@@ -48,6 +48,7 @@ from .ops import (
     ConflictInfo,
     OpResult,
     execute,
+    execute_trash,
     plan_copy_move,
     run_in_thread,
 )
@@ -149,7 +150,7 @@ class MainWindow(QMainWindow):
             ("F5", "Копирование", self.do_copy),
             ("F6", "Перенос", self.do_move),
             ("F7", "Папка", self.do_mkdir),
-            ("F8", "Удаление", self.do_delete),
+            ("F8", "В корзину", self.do_delete),
             ("F10", "Выход", self.close),
         ):
             btn = QPushButton(f" {key} {title} ")
@@ -209,7 +210,8 @@ class MainWindow(QMainWindow):
         self.act_copy = act("Копирование", "F5", self.do_copy)
         self.act_move = act("Перенос", "F6", self.do_move)
         act("Новая папка", "F7", self.do_mkdir)
-        self.act_delete = act("Удаление", "F8", self.do_delete)
+        self.act_delete = act("Удаление (в корзину)", "F8", self.do_delete)
+        act("Удалить безвозвратно", "Shift+F8", self.do_delete_permanent)
         act("Переименовать", "Shift+F6", self.do_rename)
         act("Групповое переименование…", "Ctrl+M", self.do_batch_rename)
         act("Запаковать…", "Alt+F5", self.do_pack)
@@ -235,8 +237,8 @@ class MainWindow(QMainWindow):
         for title in ("Просмотр", "Правка", "Открыть системным приложением"):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
-        for title in ("Копирование", "Перенос", "Новая папка", "Удаление",
-                      "Переименовать", "Групповое переименование…"):
+        for title in ("Копирование", "Перенос", "Новая папка", "Удаление (в корзину)",
+                      "Удалить безвозвратно", "Переименовать", "Групповое переименование…"):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
         for title in ("Запаковать…", "Распаковать…"):
@@ -357,7 +359,8 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
         if entry is not None and archive_format(entry.path):
             menu.addAction(self._find_action("Распаковать…"))
-        for title in ("Копирование", "Перенос", "Удаление", "Переименовать"):
+        for title in ("Копирование", "Перенос", "Удаление (в корзину)",
+                      "Переименовать"):
             menu.addAction(self._find_action(title))
         menu.addSeparator()
         menu.addAction(self._find_action("Открыть системным приложением"))
@@ -590,6 +593,13 @@ class MainWindow(QMainWindow):
             self._enqueue_op(title, extract_fn, after=self.refresh_all)
 
     def do_delete(self):
+        """F8 — переместить в корзину (как в Nautilus); Shift+F8 — безвозвратно."""
+        self._delete_selected(permanent=False)
+
+    def do_delete_permanent(self):
+        self._delete_selected(permanent=True)
+
+    def _delete_selected(self, permanent: bool):
         if self.active.is_vfs:
             self._delete_in_archive()
             return
@@ -597,10 +607,19 @@ class MainWindow(QMainWindow):
         if not sources:
             self._status("Нет отмеченных объектов (Insert — отметить)")
             return
-        if not confirm_delete(self, sources, self.active.current_path()):
+        if permanent:
+            action, button = "Удалить безвозвратно", "Удалить навсегда"
+            title = "Удаление безвозвратно"
+            fn = self._fs_fn(KIND_DELETE, None, sources)
+        else:
+            action, button = "Переместить в корзину", "В корзину"
+            title = "Удаление (в корзину)"
+            fn = (lambda progress_cb, is_cancelled:
+                  execute_trash(sources, progress_cb, is_cancelled))
+        if not confirm_delete(self, sources, self.active.current_path(),
+                              action=action, button=button):
             return
-        self._enqueue_op("Удаление", self._fs_fn(KIND_DELETE, None, sources),
-                         after=self.refresh_all)
+        self._enqueue_op(title, fn, after=self.refresh_all)
 
     def _delete_in_archive(self) -> None:
         panel = self.active
@@ -848,11 +867,28 @@ def _app_icon():
 
 
 def main(argv=None):
-    app = QApplication(argv if argv is not None else sys.argv)
+    import argparse
+
+    raw = list(sys.argv[1:] if argv is None else argv)
+    parser = argparse.ArgumentParser(
+        prog="sphaera-commander",
+        description="Sphaera Commander — двухпанельный файловый менеджер")
+    parser.add_argument("paths", nargs="*", metavar="КАТАЛОГ",
+                        help="каталог для левой (и правой) панели")
+    parser.add_argument("--version", action="version",
+                        version=f"Sphaera Commander {__version__}")
+    ns = parser.parse_args(raw)
+
+    app = QApplication([sys.argv[0] if argv is None else "sphaera-commander"])
     app.setApplicationName("Sphaera Commander")
     app.setOrganizationName("Sphaera")
+    app.setDesktopFileName("sphaera-commander")
     app.setWindowIcon(_app_icon())
     win = MainWindow()
+    for panel, path in ((win.left, ns.paths[0] if ns.paths else None),
+                        (win.right, ns.paths[1] if len(ns.paths) > 1 else None)):
+        if path:
+            panel.cd(path)
     win.show()
     return app.exec()
 

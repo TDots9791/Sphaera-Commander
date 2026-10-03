@@ -8,6 +8,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -51,6 +52,11 @@ def make_entry(path: str) -> FileEntry:
 
 def noop_progress(_p):
     pass
+
+
+def write(path: str, text: str) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
 
 
 def not_cancelled():
@@ -344,6 +350,104 @@ class CompareTests(unittest.TestCase):
         dl, dr = compare_name_sets(left, right)
         self.assertEqual(dl, {"b", "d"})   # b отличается, d отсутствует справа
         self.assertEqual(dr, {"b", "c"})
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class TrashTests(unittest.TestCase):
+    """F8: удаление в корзину через gio trash."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sc_trash_")
+        self.xdg = tempfile.mkdtemp(prefix="sc_trash_xdg_")
+        self._old_xdg = os.environ.get("XDG_DATA_HOME")
+        os.environ["XDG_DATA_HOME"] = self.xdg
+        self.src = os.path.join(self.tmp, "src")
+        os.makedirs(self.src)
+        write(os.path.join(self.src, "a.txt"), "alpha")
+        os.makedirs(os.path.join(self.src, "sub"))
+        write(os.path.join(self.src, "sub", "b.txt"), "beta")
+
+    def tearDown(self):
+        if self._old_xdg is None:
+            os.environ.pop("XDG_DATA_HOME", None)
+        else:
+            os.environ["XDG_DATA_HOME"] = self._old_xdg
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        shutil.rmtree(self.xdg, ignore_errors=True)
+
+    def test_trash_invokes_gio_and_accounts(self):
+        from sphaera_commander import ops as ops_mod
+        from sphaera_commander.ops import execute_trash
+
+        entries = [make_entry(os.path.join(self.src, n)) for n in ("a.txt", "sub")]
+        calls = []
+
+        def fake_run(cmd, **_kw):
+            calls.append(cmd)
+            return unittest.mock.MagicMock(returncode=0, stderr="")
+
+        with unittest.mock.patch.object(ops_mod.subprocess, "run", side_effect=fake_run):
+            res = execute_trash(entries, noop_progress, not_cancelled)
+        self.assertEqual(res.errors, [])
+        self.assertEqual(res.done_files, 2)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([os.path.basename(c) for c in calls[0][:3]],
+                         ["gio", "trash", "--"])
+        self.assertEqual(calls[0][3], os.path.join(self.src, "a.txt"))
+
+    def test_trash_gio_failure_recorded(self):
+        from sphaera_commander import ops as ops_mod
+        from sphaera_commander.ops import execute_trash
+
+        entries = [make_entry(os.path.join(self.src, "a.txt"))]
+
+        def fake_run(cmd, **_kw):
+            return unittest.mock.MagicMock(returncode=1, stderr="отказано")
+
+        with unittest.mock.patch.object(ops_mod.subprocess, "run", side_effect=fake_run):
+            res = execute_trash(entries, noop_progress, not_cancelled)
+        self.assertEqual(res.done_files, 0)
+        self.assertEqual(res.errors[0].message, "отказано")
+
+    def test_trash_real_gio(self):
+        """Реальный gio trash; skip на монтированиях без поддержки корзины."""
+        from sphaera_commander.ops import execute_trash
+
+        entries = [make_entry(os.path.join(self.src, "a.txt"))]
+        res = execute_trash(entries, noop_progress, not_cancelled)
+        if res.errors and "не поддерживается" in res.errors[0].message:
+            self.skipTest("gio запрещает корзину на этом монтировании (tmpfs)")
+        self.assertEqual(res.errors, [], res.errors)
+        self.assertEqual(os.listdir(self.src), [])
+        trash_files = os.path.join(self.xdg, "Trash", "files")
+        self.assertTrue(os.path.isfile(os.path.join(trash_files, "a.txt")))
+        info = os.path.join(self.xdg, "Trash", "info", "a.txt.trashinfo")
+        self.assertTrue(os.path.isfile(info))
+        self.assertIn("Path=", open(info).read())
+
+    def test_trash_cancel_and_vfs_guard(self):
+        from sphaera_commander.fsmodel import FileEntry
+        from sphaera_commander.ops import execute_trash
+
+        virtual = FileEntry("x", "/tmp/arc.zip::x", False, False, 1, 0.0, 0o644)
+        entries = [make_entry(os.path.join(self.src, "a.txt")), virtual]
+        res = execute_trash(entries, noop_progress, lambda: True)
+        self.assertTrue(res.cancelled)
+        self.assertTrue(os.path.isfile(os.path.join(self.src, "a.txt")))
+
+    def test_trash_without_gio(self):
+        from sphaera_commander import ops as ops_mod
+        from sphaera_commander.ops import execute_trash
+
+        entries = [make_entry(os.path.join(self.src, "a.txt"))]
+        with unittest.mock.patch.object(ops_mod.shutil, "which", return_value=None):
+            res = execute_trash(entries, noop_progress, not_cancelled)
+        self.assertTrue(res.errors)
+        self.assertIn("gio", res.errors[0].message)
+        self.assertTrue(os.path.isfile(os.path.join(self.src, "a.txt")))
 
 
 if __name__ == "__main__":

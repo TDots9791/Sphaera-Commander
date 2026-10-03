@@ -173,15 +173,16 @@ class OverwriteAskDialog(QDialog):
         return dlg._answer
 
 
-def confirm_delete(parent, sources: list, current_dir: str) -> bool:
+def confirm_delete(parent, sources: list, current_dir: str,
+                   action: str = "Удалить", button: str = "Удалить") -> bool:
     names = ", ".join(e.name for e in sources[:6])
     if len(sources) > 6:
         names += f" … и ещё {len(sources) - 6}"
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Question)
-    box.setWindowTitle("Удаление")
-    box.setText(f"Удалить {len(sources)} объект(ов) из\n{current_dir}?\n\n{names}")
-    yes = box.addButton("Удалить", QMessageBox.AcceptRole)
+    box.setWindowTitle(action)
+    box.setText(f"{action} {len(sources)} объект(ов) из\n{current_dir}?\n\n{names}")
+    yes = box.addButton(button, QMessageBox.AcceptRole)
     box.addButton("Отмена", QMessageBox.RejectRole)
     box.exec()
     return box.clickedButton() is yes
