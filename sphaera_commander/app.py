@@ -223,6 +223,9 @@ class MainWindow(QMainWindow):
                               lambda: self.toggle_hidden(), checkable=True)
         self.act_hidden.setChecked(self.show_hidden)
         act("Поменять панели местами", "Ctrl+U", self.swap_panels)
+        self.act_fullscreen = act("Полноэкранный режим", "F11",
+                                  self.toggle_fullscreen, checkable=True)
+        act("Выйти из полноэкранного режима", "Escape", self._exit_fullscreen)
         act("Выход", "Ctrl+Q", self.close)
         act("Сортировка: имя", "Ctrl+F3", lambda: self._sort_active(NAME_COL))
         act("Сортировка: дата", "Ctrl+F5", lambda: self._sort_active(MTIME_COL))
@@ -249,6 +252,7 @@ class MainWindow(QMainWindow):
         m_view = self.menuBar().addMenu("&Вид")
         m_view.addAction(self.act_hidden)
         m_view.addAction(self._find_action("Обновить"))
+        m_view.addAction(self.act_fullscreen)
         m_sort = m_view.addMenu("Сортировка")
         for t in ("имя", "дата", "размер"):
             m_sort.addAction(self._find_action(f"Сортировка: {t}"))
@@ -318,6 +322,20 @@ class MainWindow(QMainWindow):
         self.left.cd(rpath, quiet=True)
         self.right.cd(lpath, quiet=True)
         self._update_title()
+
+    def toggle_fullscreen(self):
+        if self.isFullScreen():
+            self.showNormal()
+            self.menuBar().show()
+            self.act_fullscreen.setChecked(False)
+        else:
+            self.showFullScreen()
+            self.menuBar().hide()  # выход: F11 или Esc
+            self.act_fullscreen.setChecked(True)
+
+    def _exit_fullscreen(self):
+        if self.isFullScreen():
+            self.toggle_fullscreen()
 
     def _sort_active(self, col: int):
         self.active.model.apply_sort(col)

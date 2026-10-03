@@ -483,3 +483,37 @@ class CopyPathsTests(QtTestCase):
         self.win.left.view.set_current_row(0)  # '..'
         self.win._copy_paths(self.win.left)
         self.assertEqual(QApplication.clipboard().text(), self.tmp)
+
+
+class FullscreenTests(QtTestCase):
+    """F11: полноэкранный режим и выход из него."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from sphaera_commander.app import MainWindow
+
+        cls.win = MainWindow()
+        cls.win.show()
+
+    def test_toggle_fullscreen_and_exit(self):
+        w = self.win
+        self.assertFalse(w.isFullScreen())
+        w.toggle_fullscreen()
+        self.assertTrue(w.isFullScreen())
+        self.assertTrue(w.menuBar().isHidden())
+        self.assertTrue(w.act_fullscreen.isChecked())
+        w.toggle_fullscreen()
+        self.assertFalse(w.isFullScreen())
+        self.assertFalse(w.menuBar().isHidden())
+        self.assertFalse(w.act_fullscreen.isChecked())
+
+    def test_escape_exits_fullscreen_only(self):
+        w = self.win
+        w._exit_fullscreen()  # не в фулскрине — ничего не меняет
+        self.assertFalse(w.isFullScreen())
+        w.toggle_fullscreen()
+        self.assertTrue(w.isFullScreen())
+        w._exit_fullscreen()
+        self.assertFalse(w.isFullScreen())
+        self.assertFalse(w.menuBar().isHidden())
