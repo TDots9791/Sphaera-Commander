@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import xml.etree.ElementTree as ET
+from html import escape
 
 from PySide6.QtCore import QUrl, QSize, Qt, QTimer
 from PySide6.QtGui import (
@@ -39,6 +41,8 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
+    QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -47,7 +51,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QTextBrowser,
     QTextEdit,
     QTreeWidget,
@@ -55,6 +62,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from . import previewers as pv
 
 TEXT_LIMIT = 16 * 1024 * 1024   # показываем не больше 16 МиБ текста
 HEX_LIMIT = 2 * 1024 * 1024     # и 2 МиБ hex-обзора
@@ -309,10 +318,16 @@ class FileViewerDialog(QDialog):
         self.editable = editable
         self.encoding = "utf-8"
         self.saved_on_close = False
-        self.kind = "text"  # text | md | json | binary | image
+        self.kind = "text"  # text | md | json | xml | binary | image | pdf | docx | xlsx | pptx | csv | html | fb2 | epub
         self._image: QPixmap | None = None
         self._highlighter: JsonHighlighter | None = None
         self._info_base = ""
+        self._pdf_path = ""
+        self._pdf_index = 0
+        self._pdf_count = 0
+        self._pdf_scale = 2.0
+        self._doc_items: list[tuple[str, str]] = []
+        self._sheets: list[tuple[str, list[list[str]]]] = []
         self._json_timer = QTimer(self)
         self._json_timer.setSingleShot(True)
         self._json_timer.setInterval(500)
@@ -335,10 +350,85 @@ class FileViewerDialog(QDialog):
         self.tree.setHeaderLabels(("Узел", "Значение"))
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
+
+        # -- страница документа (html/fb2/epub/pptx) с выбором глав/слайдов
+        self.doc_combo = QComboBox()
+        self.doc_combo.hide()
+        self.doc_combo.currentIndexChanged.connect(self._on_doc_combo)
+        doc_page = QWidget()
+        doc_layout = QVBoxLayout(doc_page)
+        doc_layout.setContentsMargins(0, 0, 0, 0)
+        doc_layout.addWidget(self.doc_combo)
+        doc_layout.addWidget(self.preview, 1)
+
+        # -- страница PDF: рендер страницы + текстовый слой + правка
+        self.pdf_label = QLabel()
+        self.pdf_label.setAlignment(Qt.AlignCenter)
+        self.pdf_scroll = QScrollArea()
+        self.pdf_scroll.setWidgetResizable(True)
+        self.pdf_scroll.setWidget(self.pdf_label)
+        self.pdf_text = QPlainTextEdit()
+        self.pdf_text.setReadOnly(True)
+        self.pdf_inner = QStackedWidget()
+        self.pdf_inner.addWidget(self.pdf_scroll)  # 0 — картинка
+        self.pdf_inner.addWidget(self.pdf_text)    # 1 — текстовый слой
+        self.lbl_pdf_page = QLabel("")
+        self.btn_pdf_prev = QPushButton("←")
+        self.btn_pdf_next = QPushButton("→")
+        self.btn_pdf_prev.clicked.connect(lambda: self._pdf_navigate(-1))
+        self.btn_pdf_next.clicked.connect(lambda: self._pdf_navigate(1))
+        self.btn_pdf_text = QPushButton("Текст")
+        self.btn_pdf_text.setCheckable(True)
+        self.btn_pdf_text.toggled.connect(self._pdf_show_text)
+        self.btn_zoom_out = QPushButton("−")
+        self.btn_zoom_in = QPushButton("+")
+        self.btn_zoom_out.clicked.connect(lambda: self._pdf_zoom(1 / 1.25))
+        self.btn_zoom_in.clicked.connect(lambda: self._pdf_zoom(1.25))
+        self.btn_pdf_rot_left = QPushButton("↺")
+        self.btn_pdf_rot_right = QPushButton("↻")
+        self.btn_pdf_rot_left.clicked.connect(lambda: self._pdf_rotate(-90))
+        self.btn_pdf_rot_right.clicked.connect(lambda: self._pdf_rotate(90))
+        self.btn_pdf_delete = QPushButton("Удалить страницу")
+        self.btn_pdf_delete.clicked.connect(self._pdf_delete_page)
+        self.btn_pdf_export = QPushButton("Экспорт страниц…")
+        self.btn_pdf_export.clicked.connect(self._pdf_export)
+        pdf_bar = QHBoxLayout()
+        pdf_bar.addWidget(self.lbl_pdf_page)
+        pdf_bar.addWidget(self.btn_pdf_prev)
+        pdf_bar.addWidget(self.btn_pdf_next)
+        pdf_bar.addWidget(self.btn_zoom_out)
+        pdf_bar.addWidget(self.btn_zoom_in)
+        pdf_bar.addWidget(self.btn_pdf_text)
+        pdf_bar.addStretch(1)
+        pdf_bar.addWidget(self.btn_pdf_rot_left)
+        pdf_bar.addWidget(self.btn_pdf_rot_right)
+        pdf_bar.addWidget(self.btn_pdf_delete)
+        pdf_bar.addWidget(self.btn_pdf_export)
+        pdf_page = QWidget()
+        pdf_layout = QVBoxLayout(pdf_page)
+        pdf_layout.setContentsMargins(0, 0, 0, 0)
+        pdf_layout.addLayout(pdf_bar)
+        pdf_layout.addWidget(self.pdf_inner, 1)
+
+        # -- страница таблиц (csv/xlsx)
+        self.sheet_combo = QComboBox()
+        self.sheet_combo.hide()
+        self.sheet_combo.currentIndexChanged.connect(self._on_sheet_changed)
+        self.grid = QTableWidget()
+        self.grid.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.grid.verticalHeader().hide()
+        grid_page = QWidget()
+        grid_layout = QVBoxLayout(grid_page)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.addWidget(self.sheet_combo)
+        grid_layout.addWidget(self.grid, 1)
+
         self.stack = QStackedWidget()
         self.stack.addWidget(self.text_edit)  # 0 — исходник/текст
-        self.stack.addWidget(self.preview)    # 1 — рендер markdown
-        self.stack.addWidget(self.tree)       # 2 — дерево json
+        self.stack.addWidget(doc_page)        # 1 — рендер (md/html/fb2/epub/pptx)
+        self.stack.addWidget(self.tree)       # 2 — дерево json/xml
+        self.stack.addWidget(pdf_page)        # 3 — pdf
+        self.stack.addWidget(grid_page)       # 4 — csv/xlsx
 
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
@@ -463,7 +553,13 @@ class FileViewerDialog(QDialog):
         self.btn_format.hide()
         self.btn_tree.hide()
         self.btn_preview.hide()
+        self._hide_doc_widgets()
         self._set_preview(False, force=True)
+
+        ext_kind = pv.document_kind(path)
+        if ext_kind is not None:
+            self._load_document(path, ext_kind)
+            return
 
         img = QImage(path)
         if not img.isNull():
@@ -528,6 +624,301 @@ class FileViewerDialog(QDialog):
         if app is None:
             return False
         return app.palette().color(app.palette().ColorRole.Window).lightness() < 128
+
+    # -- форматные документы -----------------------------------------------
+
+    def _hide_doc_widgets(self):
+        for b in (self.btn_pdf_prev, self.btn_pdf_next, self.btn_zoom_in,
+                  self.btn_zoom_out, self.btn_pdf_text, self.btn_pdf_rot_left,
+                  self.btn_pdf_rot_right, self.btn_pdf_delete,
+                  self.btn_pdf_export):
+            b.hide()
+        self.lbl_pdf_page.setText("")
+        self.doc_combo.hide()
+        self.sheet_combo.hide()
+        self.btn_pdf_text.setChecked(False)
+
+    def _load_document(self, path: str, kind: str) -> None:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            loader = {
+                "pdf": self._load_pdf,
+                "docx": self._load_docx,
+                "xlsx": self._load_xlsx,
+                "pptx": self._load_pptx,
+                "csv": self._load_csv,
+                "html": self._load_html,
+                "fb2": self._load_fb2,
+                "epub": self._load_epub,
+                "xml": self._load_xml,
+            }[kind]
+            loader(path)
+        except Exception as exc:  # битые файлы не должны ронять приложение
+            QApplication.restoreOverrideCursor()
+            self.kind = "binary"
+            self._hide_doc_widgets()
+            self.btn_wrap.hide()
+            self.stack.setCurrentIndex(0)
+            self.stack.show()
+            self.text_edit.setPlainText(f"<не удалось открыть ({kind}):\n{exc}>")
+            self.lbl_info.setText("ошибка открытия")
+            return
+        QApplication.restoreOverrideCursor()
+        self._update_cursor_status()
+
+    # pdf ------------------------------------------------------------------
+
+    def _load_pdf(self, path: str) -> None:
+        self.kind = "pdf"
+        self._pdf_path = path
+        self._pdf_count = pv.pdf_page_count(path)
+        if self._pdf_count == 0:
+            raise ValueError("в файле нет страниц")
+        self._pdf_index = 0
+        self._pdf_scale = 2.0
+        for b in (self.btn_pdf_prev, self.btn_pdf_next, self.btn_zoom_in,
+                  self.btn_zoom_out, self.btn_pdf_text):
+            b.show()
+        for b in (self.btn_pdf_rot_left, self.btn_pdf_rot_right,
+                  self.btn_pdf_delete, self.btn_pdf_export):
+            b.setVisible(self.editable)
+        self.stack.setCurrentIndex(3)
+        self.search.setEnabled(False)
+        self.btn_replace_toggle.hide()
+        self._pdf_show()
+
+    def _pdf_show(self) -> None:
+        data, w, h, stride = pv.pdf_render(self._pdf_path, self._pdf_index,
+                                           self._pdf_scale)
+        img = QImage(data, w, h, stride, QImage.Format.Format_BGR888)
+        self.pdf_label.setPixmap(QPixmap.fromImage(img.copy()))
+        self.lbl_pdf_page.setText(f"стр. {self._pdf_index + 1} из {self._pdf_count}")
+        self.lbl_info.setText(f"PDF: {self._pdf_count} стр. • масштаб {self._pdf_scale:.2f}x"
+                              + (" • F4 — правка" if self.editable else ""))
+
+    def _pdf_navigate(self, delta: int) -> None:
+        new_index = self._pdf_index + delta
+        if not 0 <= new_index < self._pdf_count:
+            return
+        self._pdf_index = new_index
+        if self.btn_pdf_text.isChecked():
+            self.pdf_text.setPlainText(
+                pv.pdf_page_text(self._pdf_path, self._pdf_index))
+        self.pdf_inner.setCurrentIndex(1 if self.btn_pdf_text.isChecked() else 0)
+        self._pdf_show()
+
+    def _pdf_show_text(self, on: bool) -> None:
+        self.pdf_inner.setCurrentIndex(1 if on else 0)
+        if on:
+            self.pdf_text.setPlainText(
+                pv.pdf_page_text(self._pdf_path, self._pdf_index))
+
+    def _pdf_zoom(self, factor: float) -> None:
+        self._pdf_scale = max(0.5, min(6.0, self._pdf_scale * factor))
+        self._pdf_show()
+
+    def _pdf_rotate(self, delta: int) -> None:
+        pv.pdf_rotate_pages(self._pdf_path, [self._pdf_index], delta)
+        self._pdf_show()
+
+    def _pdf_delete_page(self) -> None:
+        ret = QMessageBox.question(
+            self, "Удаление страницы",
+            f"Удалить страницу {self._pdf_index + 1} из {self._pdf_count}?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ret != QMessageBox.Yes:
+            return
+        pv.pdf_delete_pages(self._pdf_path, [self._pdf_index])
+        self._pdf_count -= 1
+        if self._pdf_count == 0:
+            self.lbl_info.setText("PDF: страниц не осталось")
+            self.reject()
+            return
+        self._pdf_index = min(self._pdf_index, self._pdf_count - 1)
+        self._pdf_show()
+
+    def _pdf_export(self) -> None:
+        text, ok = QInputDialog.getText(
+            self, "Экспорт страниц",
+            f"Страницы (например 1-3,5; всего {self._pdf_count}):",
+            text=str(self._pdf_index + 1))
+        if not ok or not text.strip():
+            return
+        try:
+            indices = pv.parse_ranges(text, self._pdf_count)
+        except ValueError:
+            QMessageBox.warning(self, "Экспорт", "Неверный диапазон страниц")
+            return
+        base = os.path.splitext(self._pdf_path)[0]
+        out, _filter = QFileDialog.getSaveFileName(
+            self, "Экспорт страниц PDF", base + "-страницы.pdf", "PDF (*.pdf)")
+        if not out:
+            return
+        pv.pdf_export_pages(self._pdf_path, indices, out)
+        QMessageBox.information(self, "Экспорт",
+                                f"Сохранено страниц: {len(indices)}\n{out}")
+
+    # docx -------------------------------------------------------------------
+
+    def _load_docx(self, path: str) -> None:
+        self.kind = "docx"
+        self.btn_wrap.show()
+        if self.editable:
+            lines = pv.docx_paragraphs(path)
+            self.text_edit.setPlainText("\n".join(lines))
+            self.text_edit.setReadOnly(False)
+            self.stack.setCurrentIndex(0)
+            self._info_base = ("docx: правка по абзацам (стиль абзаца сохраняется, "
+                               "встроенное форматирование меняемых абзацев теряется)")
+            self.lbl_info.setText(self._info_base)
+        else:
+            self._set_document_html(pv.docx_to_html(path))
+            self.lbl_info.setText("docx: просмотр • F4 — правка по абзацам")
+
+    def _set_document_html(self, html: str) -> None:
+        self.preview.setHtml(html)
+        self.stack.setCurrentIndex(1)
+
+    # epub / pptx ------------------------------------------------------------
+
+    def _load_epub(self, path: str) -> None:
+        self.kind = "epub"
+        self._doc_items = pv.epub_chapters(path)
+        if not self._doc_items:
+            raise ValueError("в книге нет текстовых глав")
+        self.doc_combo.blockSignals(True)
+        self.doc_combo.clear()
+        for title, _xhtml in self._doc_items:
+            self.doc_combo.addItem(title)
+        self.doc_combo.blockSignals(False)
+        self.doc_combo.show()
+        self.doc_combo.setCurrentIndex(0)
+        self._on_doc_combo(0)  # сигналы combo были заблокированы
+        self.stack.setCurrentIndex(1)
+        self.lbl_info.setText(f"epub: глав {len(self._doc_items)} • "
+                              "изображения и стили книг упрощены")
+
+    def _load_pptx(self, path: str) -> None:
+        self.kind = "pptx"
+        slides = pv.pptx_slides(path)
+        self._doc_items = [(f"Слайд {n}", html) for n, html in slides]
+        self.doc_combo.blockSignals(True)
+        self.doc_combo.clear()
+        for title, _html in self._doc_items:
+            self.doc_combo.addItem(title)
+        self.doc_combo.blockSignals(False)
+        self.doc_combo.show()
+        self.doc_combo.setCurrentIndex(0)
+        self._on_doc_combo(0)  # сигналы combo были заблокированы
+        self.stack.setCurrentIndex(1)
+        self.lbl_info.setText(f"pptx: слайдов {len(self._doc_items)} • текстовый просмотр")
+
+    def _on_doc_combo(self, index: int) -> None:
+        if 0 <= index < len(self._doc_items):
+            _title, html = self._doc_items[index]
+            self.preview.setHtml(html)
+
+    # xlsx / csv ---------------------------------------------------------------
+
+    def _load_xlsx(self, path: str) -> None:
+        self.kind = "xlsx"
+        self._sheets = pv.xlsx_sheets(path)
+        self.sheet_combo.blockSignals(True)
+        self.sheet_combo.clear()
+        for name, _rows in self._sheets:
+            self.sheet_combo.addItem(name)
+        self.sheet_combo.blockSignals(False)
+        self.sheet_combo.setVisible(len(self._sheets) > 1)
+        self.sheet_combo.setCurrentIndex(0)
+        self._on_sheet_changed(0)
+        self.stack.setCurrentIndex(4)
+
+    def _load_csv(self, path: str) -> None:
+        self.kind = "csv"
+        text, enc, truncated = text_preview(path)
+        delim, rows = pv.csv_grid(text)
+        self._sheets = [(path, rows)]
+        self.sheet_combo.hide()
+        self._fill_grid(rows)
+        self.stack.setCurrentIndex(4)
+        note = " (обрезано)" if truncated else ""
+        self.lbl_info.setText(f"CSV: кодировка {enc}, разделитель {delim!r}{note}")
+
+    def _on_sheet_changed(self, index: int) -> None:
+        if 0 <= index < len(self._sheets):
+            _name, rows = self._sheets[index]
+            self._fill_grid(rows)
+
+    def _fill_grid(self, rows: list[list[str]]) -> None:
+        view_cap = 3000
+        view = rows[:view_cap]
+        cols = min(max((len(r) for r in view), default=1), 64)
+        self.grid.clear()
+        self.grid.setRowCount(len(view))
+        self.grid.setColumnCount(cols)
+        for r, row in enumerate(view):
+            for c in range(min(len(row), cols)):
+                self.grid.setItem(r, c, QTableWidgetItem(row[c]))
+        self.grid.resizeColumnsToContents()
+        if len(rows) > view_cap:
+            self.lbl_info.setText(f"показаны первые {view_cap} строк из {len(rows)}")
+
+    # html / fb2 -------------------------------------------------------------
+
+    def _load_html(self, path: str) -> None:
+        self.kind = "html"
+        text, enc, _trunc = text_preview(path)
+        self.preview.document().setBaseUrl(
+            QUrl.fromLocalFile(os.path.dirname(path) or "."))
+        self.preview.setHtml(text)
+        self.stack.setCurrentIndex(1)
+        self.lbl_info.setText(f"HTML • кодировка: {enc}")
+
+    def _load_fb2(self, path: str) -> None:
+        self.kind = "fb2"
+        title, html = pv.fb2_html(path)
+        heading = f"<h2>{escape(title)}</h2>" if title else ""
+        self.preview.setHtml(heading + html)
+        self.stack.setCurrentIndex(1)
+        self.lbl_info.setText(f"fb2: {title or os.path.basename(path)}")
+
+    # xml ----------------------------------------------------------------------
+
+    def _load_xml(self, path: str) -> None:
+        self.kind = "xml"
+        self.btn_wrap.show()
+        self.btn_tree.show()
+        text, enc, truncated = text_preview(path)
+        self.encoding = enc
+        self.text_edit.setPlainText(text)
+        self.text_edit.setReadOnly(not self.editable)
+        self._info_base = f"XML • кодировка: {enc}" + (" (обрезано)" if truncated else "")
+        self.lbl_info.setText(self._info_base)
+        self.stack.setCurrentIndex(0)
+
+    def _fill_xml_tree(self) -> bool:
+        try:
+            _root_name, node = pv.xml_tree(self._xml_path())
+        except ET.ParseError as exc:
+            self.lbl_info.setText(f"{self._info_base} • дерево недоступно: {exc}")
+            return False
+
+        def add(parent, node):
+            tag, text, children = node
+            item = QTreeWidgetItem([tag, text])
+            for child in children:
+                add(item, child)
+            parent.addChild(item)
+            return item
+
+        self.tree.clear()
+        add(self.tree.invisibleRootItem(), node)
+        self.tree.expandToDepth(0)
+        return True
+
+    def _xml_path(self) -> str:
+        return self.files[self.index]
+
 
     # -- markdown ----------------------------------------------------------
 
@@ -626,16 +1017,23 @@ class FileViewerDialog(QDialog):
             self._build_json_tree()
 
     def _toggle_tree(self, on: bool) -> None:
-        if self.kind != "json":
-            self.btn_tree.setChecked(False)
+        if self.kind == "json":
+            if on:
+                if not self._build_json_tree():
+                    self.btn_tree.setChecked(False)
+                    return
+                self.stack.setCurrentIndex(2)
+            else:
+                self.stack.setCurrentIndex(0)
             return
-        if on:
-            if not self._build_json_tree():
-                self.btn_tree.setChecked(False)
-                return
-            self.stack.setCurrentIndex(2)
-        else:
-            self.stack.setCurrentIndex(0)
+        if self.kind == "xml":
+            if on:
+                if not self._fill_xml_tree():
+                    self.btn_tree.setChecked(False)
+                    return
+                self.stack.setCurrentIndex(2)
+            else:
+                self.stack.setCurrentIndex(0)
 
     def _build_json_tree(self) -> bool:
         """Наполнить дерево; False — JSON не разбирается."""
@@ -729,6 +1127,16 @@ class FileViewerDialog(QDialog):
             return
         path = self.files[self.index]
         text = self.text_edit.toPlainText()
+        if self.kind == "docx":
+            try:
+                pv.docx_save_paragraphs(path, text.splitlines())
+            except Exception as exc:
+                QMessageBox.critical(self, "Ошибка",
+                                     f"Не удалось сохранить docx:\n{exc}")
+                return
+            self.text_edit.document().setModified(False)
+            self.lbl_info.setText("сохранено (docx)")
+            return
         if self.kind == "json":
             error = json_error_position(text)
             if error is not None:

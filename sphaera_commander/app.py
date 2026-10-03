@@ -53,6 +53,7 @@ from .ops import (
     run_in_thread,
 )
 from .panel import FilePanel
+from . import previewers as pv
 from .viewer import looks_binary, open_viewer
 
 
@@ -450,6 +451,12 @@ class MainWindow(QMainWindow):
         path, files, browser, member = self._viewer_targets()
         if path is None:
             self._status("Нет файла под курсором")
+            return
+        doc_kind = pv.document_kind(path)
+        if doc_kind is not None:
+            # форматы со встроенной обработкой: pdf/docx редактируются,
+            # остальные (xlsx/pptx/csv/html/xml/fb2/epub) — только просмотр
+            open_viewer(self, path, files, editable=doc_kind in ("pdf", "docx")).exec()
             return
         if browser is None:
             try:
@@ -884,10 +891,29 @@ def _app_icon():
     return QIcon(str(path)) if path.exists() else QIcon()
 
 
+def _selfcheck() -> int:
+    """Импорт всех форматных библиотек (для проверки замороженной сборки)."""
+    import importlib
+
+    modules = ("pypdfium2", "pypdf", "docx", "mammoth", "openpyxl", "pptx")
+    failed = []
+    for name in modules:
+        try:
+            importlib.import_module(name)
+            print(f"selfcheck: {name} OK")
+        except Exception as exc:
+            failed.append(name)
+            print(f"selfcheck: {name} FAIL: {exc}")
+    print("SELFCHECK:", "PASS" if not failed else f"FAIL {failed}")
+    return 0 if not failed else 1
+
+
 def main(argv=None):
     import argparse
 
     raw = list(sys.argv[1:] if argv is None else argv)
+    if os.environ.get("SPHAERA_SELFCHECK") == "1":
+        return _selfcheck()
     parser = argparse.ArgumentParser(
         prog="sphaera-commander",
         description="Sphaera Commander — двухпанельный файловый менеджер")
