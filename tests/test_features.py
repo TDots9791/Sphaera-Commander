@@ -312,6 +312,70 @@ class RenameToolTests(unittest.TestCase):
             build_rename(["a"], "")
 
 
+class RenameDialogTests(unittest.TestCase):
+    """F2: выделение имени без расширения — случайный ввод не сотрёт «.расш»."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_file_with_ext_selects_base(self):
+        from PySide6.QtWidgets import QLineEdit
+
+        from sphaera_commander.app import select_base_name
+
+        le = QLineEdit()
+        le.setText("отчёт.docx")
+        select_base_name(le, "отчёт.docx", is_dir=False)
+        self.assertEqual(le.selectedText(), "отчёт")
+
+    def test_multi_dot_selects_all_but_last_suffix(self):
+        from PySide6.QtWidgets import QLineEdit
+
+        from sphaera_commander.app import select_base_name
+
+        le = QLineEdit()
+        le.setText("archive.tar.gz")
+        select_base_name(le, "archive.tar.gz", is_dir=False)
+        self.assertEqual(le.selectedText(), "archive.tar")
+
+    def test_no_ext_selects_all(self):
+        from PySide6.QtWidgets import QLineEdit
+
+        from sphaera_commander.app import select_base_name
+
+        le = QLineEdit()
+        le.setText("Makefile")
+        select_base_name(le, "Makefile", is_dir=False)
+        self.assertEqual(le.selectedText(), "Makefile")
+
+    def test_dir_selects_all(self):
+        from PySide6.QtWidgets import QLineEdit
+
+        from sphaera_commander.app import select_base_name
+
+        le = QLineEdit()
+        le.setText("моя.папка")
+        select_base_name(le, "моя.папка", is_dir=True)
+        self.assertEqual(le.selectedText(), "моя.папка")
+
+    def test_make_rename_dialog(self):
+        from PySide6.QtWidgets import QLineEdit
+
+        from sphaera_commander.app import make_rename_dialog
+
+        entry = FileEntry(name="док.pdf", path="/tmp/док.pdf", is_dir=False,
+                          is_link=False, size=1, mtime=0.0, mode=0o100644)
+        dlg = make_rename_dialog(None, entry)
+        le = dlg.findChild(QLineEdit)
+        self.assertIsNotNone(le)
+        self.assertEqual(le.text(), "док.pdf")
+        self.assertEqual(le.selectedText(), "док")
+
+
 class ViewerHelperTests(unittest.TestCase):
     def test_detect_utf8(self):
         text, enc = detect_decode("привет".encode("utf-8"))

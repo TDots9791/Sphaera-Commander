@@ -8,7 +8,7 @@ import time
 import tarfile
 import zipfile
 
-from PySide6.QtCore import QFileSystemWatcher, QSize, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QFileSystemWatcher, QSize, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QTableView,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -25,8 +26,10 @@ from PySide6.QtWidgets import (
 from .archives import ArchiveBrowser, archive_format, norm_member
 from . import thumbnails
 from .fsmodel import (
+    EXT_COL,
     FileEntry,
     FileTableModel,
+    NAME_COL,
     human_size,
     scan_directory,
     sort_entries,
@@ -60,11 +63,23 @@ class FileView(QTableView):
         self.setDefaultDropAction(Qt.CopyAction)
         self.verticalHeader().hide()
         self.verticalHeader().setDefaultSectionSize(22)
+        # колонки всегда подгоняются под ширину панели; не влезающие имена
+        # показываются всплывающим бейджем (см. name_tooltip)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         header = self.horizontalHeader()
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setHighlightSections(False)
         header.sectionClicked.connect(self._on_header_clicked)
+
+    def apply_column_layout(self):
+        """Колонки по ширине панели: «Имя» забирает всё свободное место,
+        «Расш.» узкая фиксированная, остальные — по содержимому.
+        Вызывать после setModel(): он сбрасывает режимы заголовка."""
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(EXT_COL, QHeaderView.Fixed)
+        header.setSectionResizeMode(NAME_COL, QHeaderView.Stretch)
+        self.setColumnWidth(EXT_COL, 64)
 
     def _emit_context(self, pos) -> None:
         self.context_requested.emit(pos)
@@ -105,6 +120,37 @@ class FileView(QTableView):
     def _on_header_clicked(self, section: int):
         self.model().apply_sort(section)
         self.scrollToTop()
+
+    def name_tooltip(self, idx) -> str:
+        """Полное имя, если оно не влезает в колонку «Имя», иначе пусто."""
+        if not idx.isValid() or idx.row() <= 0 or idx.column() != NAME_COL:
+            return ""
+        text = self.model().data(idx, Qt.DisplayRole) or ""
+        available = self.visualRect(idx).width() - self.iconSize().width() - 8
+        if available <= 0:
+            return ""
+        return text if self.fontMetrics().horizontalAdvance(text) > available else ""
+
+    def event(self, ev):
+        # всплывающий бейдж с полным именем вместо усечённого
+        if ev.type() == QEvent.ToolTip:
+            idx = self.indexAt(ev.pos())
+            tip = self.name_tooltip(idx)
+            if tip:
+                QToolTip.showText(ev.globalPos(), tip, self, self.visualRect(idx))
+                return True
+        return super().event(ev)
+
+    def mousePressEvent(self, event):
+        # Ctrl+клик — отметить/снять отметку, курсор не двигается (как в TC)
+        if (event.button() == Qt.LeftButton
+                and event.modifiers() & Qt.ControlModifier):
+            idx = self.indexAt(event.position().toPoint())
+            if idx.isValid() and idx.row() > 0:
+                self.model().toggle_mark(idx.row())
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
     def set_current_row(self, row: int):
         row = max(0, min(row, self.model().rowCount() - 1))
@@ -155,6 +201,8 @@ class FilePanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # ниже этой ширины имена перестают читаться: панель не сжимается
+        self.setMinimumWidth(400)
         self.model = FileTableModel(self)
         self._gen = 0
         self._pending = ""
@@ -176,6 +224,7 @@ class FilePanel(QWidget):
 
         self.view = FileView()
         self.view.setModel(self.model)
+        self.view.apply_column_layout()  # после setModel: он сбрасывает режимы
         self.view.selectionModel().currentRowChanged.connect(self._on_cursor_changed)
         self.view.entry_activated.connect(self._on_entry_activated)
         self.view.doubleClicked.connect(
@@ -464,9 +513,7 @@ class FilePanel(QWidget):
         self.status_label.setText(text)
 
     def _on_model_reset(self) -> None:
-        self.view.resizeColumnToContents(1)
-        self.view.resizeColumnToContents(2)
-        self.view.resizeColumnToContents(3)
+        self.view.apply_column_layout()
 
     def _update_combo(self) -> None:
         self.path_combo.blockSignals(True)

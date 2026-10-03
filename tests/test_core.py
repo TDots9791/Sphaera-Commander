@@ -316,6 +316,28 @@ class ModelTests(QtTestCase):
         self.assertGreater(total, 0)
         self.assertEqual(m_count, 0)
 
+    def test_ext_column_display_and_sort(self):
+        from sphaera_commander.fsmodel import EXT_COL, ext_of
+
+        write(os.path.join(self.tmp, "заметка.md"), "# x\n")
+        write(os.path.join(self.tmp, ".dotfile"), "x")
+        write(os.path.join(self.tmp, "archive.tar.gz"), "x")
+        self.model.reload()
+        row = self.model.row_of_name("заметка.md")
+        self.assertEqual(self.model.data(self.model.index(row, EXT_COL)), "md")
+        row = self.model.row_of_name(".dotfile")
+        self.assertEqual(self.model.data(self.model.index(row, EXT_COL)), "")
+        row = self.model.row_of_name("sub")
+        self.assertEqual(self.model.data(self.model.index(row, EXT_COL)), "")
+
+        self.model.apply_sort(EXT_COL)
+        entries = [self.model.entry_at(r)
+                   for r in range(1, self.model.rowCount())]
+        exts = [ext_of(e) for e in entries if not e.is_dir]
+        self.assertEqual(exts, sorted(exts, key=str.lower))
+        kinds = [e.is_dir for e in entries]
+        self.assertEqual(kinds, sorted(kinds, reverse=True))
+
 
 class PanelTests(QtTestCase):
     def setUp(self):
@@ -363,6 +385,69 @@ class PanelTests(QtTestCase):
         self.panel._on_entry_activated(None)  # курсор на '..'
         self.panel.wait_loaded()
         self.assertEqual(self.panel.current_path(), self.tmp)
+
+    def test_columns_fill_panel_width_after_reload(self):
+        """«Имя» растягивается, сумма колонок равна ширине вьюпорта —
+        в узком окне и после перезагрузки каталога (регрессия setModel)."""
+        from PySide6.QtWidgets import QHeaderView
+
+        from sphaera_commander.fsmodel import EXT_COL, NAME_COL
+
+        self.panel.resize(1000, 600)
+        self.panel.show()
+        self.app.processEvents()
+        v = self.panel.view
+        header = v.horizontalHeader()
+        self.assertIs(header.sectionResizeMode(NAME_COL),
+                      QHeaderView.Stretch)
+        self.assertIs(header.sectionResizeMode(EXT_COL), QHeaderView.Fixed)
+        self.assertLessEqual(v.columnWidth(EXT_COL), 80)
+        self.assertGreater(v.columnWidth(NAME_COL), 200)
+        self.assertEqual(sum(v.columnWidth(i) for i in range(v.model().columnCount())),
+                         v.viewport().width())
+        # перезагрузка каталога не должна терять раскладку
+        self.panel.refresh()
+        self.panel.wait_loaded()
+        self.assertIs(header.sectionResizeMode(NAME_COL), QHeaderView.Stretch)
+        self.assertEqual(sum(v.columnWidth(i) for i in range(v.model().columnCount())),
+                         v.viewport().width())
+        self.panel.hide()
+
+    def test_ctrl_click_toggles_mark_without_cursor_move(self):
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+
+        v = self.panel.view
+        v.set_current_row(1)
+        name = self.panel.model.entry_at(1).name
+        idx = v.model().index(1, 0)
+        rect = v.visualRect(idx)
+        ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(rect.center()),
+                         Qt.LeftButton, Qt.LeftButton, Qt.ControlModifier)
+        v.mousePressEvent(ev)
+        self.assertIn(name, self.panel.model.marked)
+        self.assertEqual(v.currentIndex().row(), 1)
+        ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(rect.center()),
+                         Qt.LeftButton, Qt.LeftButton, Qt.ControlModifier)
+        v.mousePressEvent(ev)
+        self.assertNotIn(name, self.panel.model.marked)
+
+    def test_name_tooltip_for_elided_names(self):
+        from sphaera_commander.fsmodel import NAME_COL
+
+        long_name = "очень_длинное_имя_файла_" + "х" * 60 + ".txt"
+        write(os.path.join(self.tmp, long_name), "x")
+        self.panel.resize(400, 500)
+        self.panel.show()
+        self.panel.refresh()
+        self.panel.wait_loaded()
+        self.app.processEvents()
+        v = self.panel.view
+        idx = v.model().index(v.model().row_of_name(long_name), NAME_COL)
+        self.assertEqual(v.name_tooltip(idx), long_name)
+        idx = v.model().index(v.model().row_of_name("a.txt"), NAME_COL)
+        self.assertEqual(v.name_tooltip(idx), "")
+        self.panel.hide()
 
 
 class PlanTests(unittest.TestCase):

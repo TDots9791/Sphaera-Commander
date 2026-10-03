@@ -13,8 +13,8 @@ from PySide6.QtWidgets import QApplication, QStyle
 
 from . import thumbnails
 
-NAME_COL, SIZE_COL, MTIME_COL, MODE_COL = range(4)
-COLUMNS = ("Имя", "Размер", "Изменён", "Права")
+NAME_COL, EXT_COL, SIZE_COL, MTIME_COL, MODE_COL = range(5)
+COLUMNS = ("Имя", "Расш.", "Размер", "Изменён", "Права")
 
 DIR_SIZE_TEXT = "<КАТ>"
 MARK_COLOR_LIGHT = QColor(192, 0, 0)
@@ -64,10 +64,18 @@ def scan_directory(path: str, show_hidden: bool) -> list[FileEntry]:
     return entries
 
 
+def ext_of(e: FileEntry) -> str:
+    """Расширение файла без точки; у каталогов и точечных файлов пусто."""
+    if e.is_dir:
+        return ""
+    return os.path.splitext(e.name)[1][1:]
+
+
 def sort_entries(entries: list[FileEntry], col: int, desc: bool) -> None:
     """Сортировка на месте: каталоги всегда первыми, затем ключ колонки, затем имя."""
     keys = {
         NAME_COL: lambda e: e.name.lower(),
+        EXT_COL: lambda e: (ext_of(e).lower(), e.name.lower()),
         SIZE_COL: lambda e: e.size,
         MTIME_COL: lambda e: e.mtime,
     }
@@ -276,7 +284,7 @@ class FileTableModel(QAbstractTableModel):
         row = index.row()
         if row == 0:  # '..'
             if role == Qt.DisplayRole:
-                return ("..", "", "", "")[index.column()]
+                return ("..", "", "", "", "")[index.column()]
             if role == Qt.DecorationRole and index.column() == NAME_COL:
                 return self._icon("up")
             return None
@@ -285,6 +293,8 @@ class FileTableModel(QAbstractTableModel):
         if role == Qt.DisplayRole:
             if col == NAME_COL:
                 return e.name
+            if col == EXT_COL:
+                return ext_of(e)
             if col == SIZE_COL:
                 return DIR_SIZE_TEXT if e.is_dir else human_size(e.size)
             if col == MTIME_COL:

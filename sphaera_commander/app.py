@@ -41,7 +41,14 @@ from .dialogs import (
     confirm_overwrite,
     show_op_result,
 )
-from .fsmodel import MTIME_COL, NAME_COL, SIZE_COL, compare_name_sets, entry_for
+from .fsmodel import (
+    EXT_COL,
+    MTIME_COL,
+    NAME_COL,
+    SIZE_COL,
+    compare_name_sets,
+    entry_for,
+)
 from .ops import (
     ASK_CANCEL,
     KIND_COPY,
@@ -119,6 +126,29 @@ class CommandLine(QLineEdit):
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+def select_base_name(line_edit: QLineEdit, name: str, is_dir: bool) -> None:
+    """Выделить имя без расширения (как в TC): случайный ввод не сотрёт «.расш».
+    У каталогов и файлов без расширения выделяется всё имя."""
+    if is_dir:
+        base = name
+    else:
+        base, ext = os.path.splitext(name)
+        if not ext:
+            base = name
+    line_edit.setSelection(0, len(base))
+
+
+def make_rename_dialog(parent, entry) -> QInputDialog:
+    dlg = QInputDialog(parent)
+    dlg.setWindowTitle("Переименовать")
+    dlg.setLabelText("Новое имя:")
+    dlg.setTextValue(entry.name)
+    edit = dlg.findChild(QLineEdit)
+    if edit is not None:
+        select_base_name(edit, entry.name, entry.is_dir)
+    return dlg
 
 
 class MainWindow(QMainWindow):
@@ -268,6 +298,8 @@ class MainWindow(QMainWindow):
         act("Выйти из полноэкранного режима", "Escape", self._exit_fullscreen)
         act("Выход", "F10", self.close)
         act("Сортировка: имя", "Ctrl+F3", lambda: self._sort_active(NAME_COL))
+        act("Сортировка: расширение", "Ctrl+F4",
+            lambda: self._sort_active(EXT_COL))
         act("Сортировка: дата", "Ctrl+F5", lambda: self._sort_active(MTIME_COL))
         act("Сортировка: размер", "Ctrl+F6", lambda: self._sort_active(SIZE_COL))
         self.act_alt_f1 = act("Левая панель: смена диска", "Alt+F1",
@@ -298,7 +330,7 @@ class MainWindow(QMainWindow):
         m_view.addAction(self._find_action("Обновить"))
         m_view.addAction(self.act_fullscreen)
         m_sort = m_view.addMenu("Сортировка")
-        for t in ("имя", "дата", "размер"):
+        for t in ("имя", "расширение", "дата", "размер"):
             m_sort.addAction(self._find_action(f"Сортировка: {t}"))
 
         m_panels = self.menuBar().addMenu("&Панели")
@@ -989,9 +1021,9 @@ class MainWindow(QMainWindow):
         if entry is None:
             self._status("Нет объекта под курсором")
             return
-        name, ok = QInputDialog.getText(self, "Переименовать", "Новое имя:",
-                                        text=entry.name)
-        if not ok or not name.strip() or name == entry.name:
+        dlg = make_rename_dialog(self, entry)
+        name = dlg.textValue() if dlg.exec() else ""
+        if not name or not name.strip() or name == entry.name:
             return
         try:
             os.rename(entry.path, os.path.join(panel.current_path(), name.strip()))
