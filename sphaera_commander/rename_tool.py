@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from .i18n import tr
+
 import os
 import re
 
@@ -19,7 +21,7 @@ def build_rename(names: list[str], template: str,
                  start: int = 1, step: int = 1) -> list[tuple[str, str]]:
     """Вернуть пары (старое, новое); ValueError — при дублях новых имён."""
     if not template:
-        raise ValueError("пустой шаблон")
+        raise ValueError(tr("пустой шаблон"))
     seen: dict[str, str] = {}
     pairs: list[tuple[str, str]] = []
     counter = start
@@ -29,7 +31,7 @@ def build_rename(names: list[str], template: str,
         new = _COUNTER.sub(
             lambda m: f"{counter:0{int(m.group(1)) if m.group(1) else 0}d}", new)
         if new in seen:
-            raise ValueError(f"дубликат нового имени: {new!r} ({seen[new]!r} и {name!r})")
+            raise ValueError(tr("дубликат нового имени: {new!r} ({first!r} и {name!r})").format(new=new, first=seen[new], name=name))
         seen[new] = name
         pairs.append((name, new))
         counter += step

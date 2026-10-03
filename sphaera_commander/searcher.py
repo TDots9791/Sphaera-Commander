@@ -12,6 +12,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
+from .i18n import tr
 from .textutil import detect_decode, looks_binary
 
 MAX_FILE_SIZE = 32 * 1024 * 1024   # файлы больше не сканируются
@@ -37,18 +38,18 @@ class SearchStats:
     cancelled: bool = False
 
     def summary(self) -> str:
-        parts = [f"просмотрено файлов: {self.files_scanned}",
-                 f"совпало: {self.files_matched}",
-                 f"вхождений: {self.hits}"]
+        parts = [tr("просмотрено файлов: {n}").format(n=self.files_scanned),
+                 tr("совпало файлов: {n}").format(n=self.files_matched),
+                 tr("вхождений: {n}").format(n=self.hits)]
         if self.skipped_binary:
-            parts.append(f"бинарных пропущено: {self.skipped_binary}")
+            parts.append(tr("бинарных пропущено: {n}").format(n=self.skipped_binary))
         if self.skipped_large:
-            parts.append(f"крупных пропущено: {self.skipped_large}")
+            parts.append(tr("крупных пропущено: {n}").format(n=self.skipped_large))
         text = " • ".join(parts)
         if self.cancelled:
-            text += " • прервано"
+            text += tr(" • прервано")
         if self.errors:
-            text += f" • ошибок: {len(self.errors)}"
+            text += tr(" • ошибок: {n}").format(n=len(self.errors))
         return text
 
 

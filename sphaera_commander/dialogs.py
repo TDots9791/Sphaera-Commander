@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from .i18n import tr
 from .ops import (
     ASK_CANCEL,
     ASK_OVERWRITE,
@@ -65,12 +66,12 @@ class ProgressOpDialog(QDialog):
         self.bar = QProgressBar()
 
         row = QHBoxLayout()
-        btn_cancel = QPushButton("Прервать текущую")
+        btn_cancel = QPushButton(tr("Прервать текущую"))
         btn_cancel.clicked.connect(self.reject)
         row.addStretch(1)
         row.addWidget(btn_cancel)
         if abort_callable is not None:
-            btn_abort = QPushButton("Прервать все")
+            btn_abort = QPushButton(tr("Прервать все"))
             btn_abort.clicked.connect(abort_callable)
             btn_abort.clicked.connect(self.reject)
             row.addWidget(btn_abort)
@@ -84,18 +85,20 @@ class ProgressOpDialog(QDialog):
         self.resize(560, 160)
 
     def set_queue(self, queued: int) -> None:
-        self.lbl_queue.setText(f"операций в очереди: {queued}")
+        self.lbl_queue.setText(tr("операций в очереди: {n}").format(n=queued))
 
     def update_progress(self, p: Progress) -> None:
-        self.lbl_counts.setText(f"Обработано {p.done_files} из {p.total_files} объект(ов)")
+        self.lbl_counts.setText(tr("Обработано {done} из {total} объект(ов)").format(done=p.done_files, total=p.total_files))
         if p.total_bytes > 0:
             self.bar.setRange(0, p.total_bytes)
             self.bar.setValue(min(p.done_bytes, p.total_bytes))
             pct = int(p.done_bytes * 100 / p.total_bytes)
             self.bar.setFormat("%p%")
             self.lbl_counts.setText(
-                f"Обработано {p.done_files} из {p.total_files} объект(ов) — "
-                f"{_fmt_size(p.done_bytes)} из {_fmt_size(p.total_bytes)} ({pct}%)")
+                tr("Обработано {done} из {total} объект(ов) — {done_size} из {total_size} ({pct}%)").format(
+                    done=p.done_files, total=p.total_files,
+                    done_size=_fmt_size(p.done_bytes),
+                    total_size=_fmt_size(p.total_bytes), pct=pct))
         else:
             self.bar.setRange(0, 0)  # busy
         metrics = QFontMetrics(self.lbl_current.font())
@@ -133,20 +136,20 @@ class OverwriteAskDialog(QDialog):
 
     def __init__(self, parent, info: ConflictInfo):
         super().__init__(parent)
-        self.setWindowTitle("Перезапись")
+        self.setWindowTitle(tr("Перезапись"))
         self._answer = ASK_CANCEL
 
         grid = QGridLayout()
-        for col, title in enumerate(("Заменяемый (назначение)", "Источник")):
+        for col, title in enumerate((tr("Заменяемый (назначение)"), tr("Источник"))):
             grid.addWidget(QLabel(f"<b>{title}</b>"), 0, col + 1)
 
         dst_stat = (info.dst_size, info.dst_mtime)
         src_stat = (info.src_size, info.src_mtime)
         rows = (
-            ("Файл", os.path.basename(info.dst), os.path.basename(info.src)),
-            ("Каталог", os.path.dirname(info.dst), os.path.dirname(info.src)),
-            ("Размер", _fmt_size(dst_stat[0]), _fmt_size(src_stat[0])),
-            ("Изменён", _fmt_time(dst_stat[1]), _fmt_time(src_stat[1])),
+            (tr("Файл"), os.path.basename(info.dst), os.path.basename(info.src)),
+            (tr("Каталог"), os.path.dirname(info.dst), os.path.dirname(info.src)),
+            (tr("Размер"), _fmt_size(dst_stat[0]), _fmt_size(src_stat[0])),
+            (tr("Изменён"), _fmt_time(dst_stat[1]), _fmt_time(src_stat[1])),
         )
         for r, (label, dst_v, src_v) in enumerate(rows, start=1):
             grid.addWidget(QLabel(label), r, 0)
@@ -155,12 +158,12 @@ class OverwriteAskDialog(QDialog):
 
         buttons = QHBoxLayout()
         for title, answer in self.ANSWERS:
-            btn = QPushButton(title)
+            btn = QPushButton(tr(title))
             btn.clicked.connect(lambda _=False, a=answer: self._choose(a))
             buttons.addWidget(btn)
 
         layout = QVBoxLayout(self)
-        top = QLabel("Файл назначения уже существует. Заменить его?")
+        top = QLabel(tr("Файл назначения уже существует. Заменить его?"))
         top.setWordWrap(True)
         layout.addWidget(top)
         layout.addLayout(grid)
@@ -178,16 +181,19 @@ class OverwriteAskDialog(QDialog):
 
 
 def confirm_delete(parent, sources: list, current_dir: str,
-                   action: str = "Удалить", button: str = "Удалить") -> bool:
+                   action: str | None = None, button: str | None = None) -> bool:
+    action = action or tr("Удалить")
+    button = button or tr("Удалить")
     names = ", ".join(e.name for e in sources[:6])
     if len(sources) > 6:
-        names += f" … и ещё {len(sources) - 6}"
+        names += tr(" … и ещё {n}").format(n=len(sources) - 6)
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Question)
     box.setWindowTitle(action)
-    box.setText(f"{action} {len(sources)} объект(ов) из\n{current_dir}?\n\n{names}")
+    box.setText(tr("{action} {count} объект(ов) из\n{dir}?\n\n{names}").format(
+        action=action, count=len(sources), dir=current_dir, names=names))
     yes = box.addButton(button, QMessageBox.AcceptRole)
-    box.addButton("Отмена", QMessageBox.RejectRole)
+    box.addButton(tr("Отмена"), QMessageBox.RejectRole)
     box.exec()
     return box.clickedButton() is yes
 
@@ -197,7 +203,7 @@ class BatchRenameDialog(QDialog):
 
     def __init__(self, parent, names: list[str]):
         super().__init__(parent)
-        self.setWindowTitle("Групповое переименование")
+        self.setWindowTitle(tr("Групповое переименование"))
         self.names = names
         self.pairs: list[tuple[str, str]] = []
         self._error = ""
@@ -214,26 +220,26 @@ class BatchRenameDialog(QDialog):
         self.step.valueChanged.connect(self._preview)
 
         self.table = QTableWidget(len(names), 2)
-        self.table.setHorizontalHeaderLabels(("Было", "Станет"))
+        self.table.setHorizontalHeaderLabels((tr("Было"), tr("Станет")))
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.verticalHeader().hide()
 
         form = QHBoxLayout()
-        form.addWidget(QLabel("Шаблон:"))
+        form.addWidget(QLabel(tr("Шаблон:")))
         form.addWidget(self.template, 1)
-        form.addWidget(QLabel("Начало:"))
+        form.addWidget(QLabel(tr("Начало:")))
         form.addWidget(self.start)
-        form.addWidget(QLabel("Шаг:"))
+        form.addWidget(QLabel(tr("Шаг:")))
         form.addWidget(self.step)
 
         self.lbl_error = QLabel("")
         self.lbl_error.setStyleSheet("color: #b00000;")
 
-        ok = QPushButton("Переименовать")
+        ok = QPushButton(tr("Переименовать"))
         ok.setDefault(True)
         ok.clicked.connect(self._accept)
-        cancel = QPushButton("Отмена")
+        cancel = QPushButton(tr("Отмена"))
         cancel.clicked.connect(self.reject)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -241,9 +247,9 @@ class BatchRenameDialog(QDialog):
         row.addWidget(cancel)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(
+        layout.addWidget(QLabel(tr(
             "Подстановки:  * — имя без расширения,  [E] — расширение,  "
-            "[N]/[N03] — счётчик (ширина)"))
+            "[N]/[N03] — счётчик (ширина)")))
         layout.addLayout(form)
         layout.addWidget(self.lbl_error)
         layout.addWidget(self.table, 1)
@@ -284,18 +290,18 @@ def show_op_result(parent, result: OpResult) -> None:
         details = "\n".join(f"{e.path} — {e.message}" for e in result.errors[:200])
         box = QMessageBox(parent)
         box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Ошибки операции")
-        text = (f"Операция завершена с ошибками: {len(result.errors)}.\n"
-                f"Успешно: {result.done_files}, пропущено: {result.skipped}.")
+        box.setWindowTitle(tr("Ошибки операции"))
+        text = tr("Операция завершена с ошибками: {n}.\nУспешно: {ok}, пропущено: {skipped}.").format(
+            n=len(result.errors), ok=result.done_files, skipped=result.skipped)
         if result.cancelled:
-            text += "\nОперация прервана пользователем."
+            text += tr("\nОперация прервана пользователем.")
         box.setText(text)
         box.setDetailedText(details)
         box.exec()
     elif result.cancelled:
-        QMessageBox.information(parent, "Операция",
-                                f"Операция прервана.\nУспешно: {result.done_files}, "
-                                f"пропущено: {result.skipped}.")
+        QMessageBox.information(parent, tr("Операция"),
+                                tr("Операция прервана.\nУспешно: {ok}, пропущено: {skipped}.").format(
+                                    ok=result.done_files, skipped=result.skipped))
 
 
 class SearchDialog(QDialog):
@@ -312,7 +318,7 @@ class SearchDialog(QDialog):
 
     def __init__(self, parent, root_dir: str):
         super().__init__(parent)
-        self.setWindowTitle("Поиск файлов")
+        self.setWindowTitle(tr("Поиск файлов"))
         self.setModal(False)
         self.resize(860, 560)
         self.root_dir = root_dir
@@ -321,30 +327,30 @@ class SearchDialog(QDialog):
 
         self.edit_root = QLineEdit(root_dir)
         self.edit_mask = QLineEdit("*")
-        self.edit_mask.setToolTip("Маски через пробел или ;:  *.py  *.txt;README*")
+        self.edit_mask.setToolTip(tr("Маски через пробел или ;:  *.py  *.txt;README*"))
         self.edit_text = QLineEdit()
-        self.edit_text.setPlaceholderText("пусто — искать только по маске")
-        self.chk_recursive = QPushButton("Рекурсивно")
+        self.edit_text.setPlaceholderText(tr("пусто — искать только по маске"))
+        self.chk_recursive = QPushButton(tr("Рекурсивно"))
         self.chk_recursive.setCheckable(True)
         self.chk_recursive.setChecked(True)
-        self.chk_case = QPushButton("Учитывать регистр")
+        self.chk_case = QPushButton(tr("Учитывать регистр"))
         self.chk_case.setCheckable(True)
-        self.chk_regex = QPushButton("Рег. выражение")
+        self.chk_regex = QPushButton(tr("Рег. выражение"))
         self.chk_regex.setCheckable(True)
 
-        self.btn_start = QPushButton("Найти")
+        self.btn_start = QPushButton(tr("Найти"))
         self.btn_start.setDefault(True)
         self.btn_start.clicked.connect(self.start_search)
-        self.btn_stop = QPushButton("Стоп")
+        self.btn_stop = QPushButton(tr("Стоп"))
         self.btn_stop.setEnabled(False)
         self.btn_stop.clicked.connect(self._cancel.set)
 
         form = QGridLayout()
-        form.addWidget(QLabel("Где:"), 0, 0)
+        form.addWidget(QLabel(tr("Где:")), 0, 0)
         form.addWidget(self.edit_root, 0, 1, 1, 3)
-        form.addWidget(QLabel("Маска файлов:"), 1, 0)
+        form.addWidget(QLabel(tr("Маска файлов:")), 1, 0)
         form.addWidget(self.edit_mask, 1, 1)
-        form.addWidget(QLabel("Текст:"), 2, 0)
+        form.addWidget(QLabel(tr("Текст:")), 2, 0)
         form.addWidget(self.edit_text, 2, 1)
         row = QHBoxLayout()
         row.addWidget(self.chk_recursive)
@@ -356,13 +362,13 @@ class SearchDialog(QDialog):
         form.addLayout(row, 2, 2, 1, 2)
 
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(("Файл", "Стр.", "Совпадение"))
+        self.tree.setHeaderLabels((tr("Файл"), tr("Стр."), tr("Совпадение")))
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setSectionResizeMode(2, QHeaderView.Stretch)
         self.tree.itemActivated.connect(self._emit_open)
         self.tree.setRootIsDecorated(False)
 
-        self.lbl_status = QLabel(f"Поиск в: {root_dir}")
+        self.lbl_status = QLabel(tr("Поиск в: {dir}").format(dir=root_dir))
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
@@ -437,15 +443,15 @@ def confirm_overwrite(parent, conflicts: list[tuple[str, str]], dest_dir: str) -
     """Массовое решение о перезаписи (для перетаскивания): POLICY_*."""
     names = "\n".join(dst for _src, dst in conflicts[:8])
     if len(conflicts) > 8:
-        names += f"\n… и ещё {len(conflicts) - 8}"
+        names += tr("\n… и ещё {n}").format(n=len(conflicts) - 8)
     box = QMessageBox(parent)
     box.setIcon(QMessageBox.Question)
-    box.setWindowTitle("Перезапись файлов")
-    box.setText(f"В папке назначения уже есть {len(conflicts)} файл(ов) с такими именами:\n"
-                f"{names}\n\nПерезаписать?")
-    b_over = box.addButton("Перезаписать все", QMessageBox.AcceptRole)
-    b_skip = box.addButton("Пропустить все", QMessageBox.NoRole)
-    box.addButton("Отмена", QMessageBox.RejectRole)
+    box.setWindowTitle(tr("Перезапись файлов"))
+    box.setText(tr("В папке назначения уже есть {n} файл(ов) с такими именами:\n{names}\n\nПерезаписать?").format(
+        n=len(conflicts), names=names))
+    b_over = box.addButton(tr("Перезаписать все"), QMessageBox.AcceptRole)
+    b_skip = box.addButton(tr("Пропустить все"), QMessageBox.NoRole)
+    box.addButton(tr("Отмена"), QMessageBox.RejectRole)
     box.exec()
     if box.clickedButton() is b_over:
         return "overwrite"

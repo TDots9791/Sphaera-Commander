@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from .i18n import tr
+
 import json
 import shutil
 import subprocess
@@ -64,14 +66,14 @@ def block_devices() -> list[dict]:
 def mount(device_path: str) -> tuple[bool, str]:
     """Примонтировать; (успех, сообщение/точка монтирования)."""
     if not shutil.which("udisksctl"):
-        return False, "udisksctl не найден"
+        return False, tr("udisksctl не найден")
     try:
         proc = subprocess.run(["udisksctl", "mount", "-b", device_path],
                               capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     if proc.returncode != 0:
-        return False, (proc.stderr or proc.stdout).strip() or "ошибка монтирования"
+        return False, (proc.stderr or proc.stdout).strip() or tr("ошибка монтирования")
     out = (proc.stdout or "").strip()
     if " at " in out:
         return True, out.rsplit(" at ", 1)[1].rstrip(".")
@@ -80,12 +82,12 @@ def mount(device_path: str) -> tuple[bool, str]:
 
 def unmount(device_path: str) -> tuple[bool, str]:
     if not shutil.which("udisksctl"):
-        return False, "udisksctl не найден"
+        return False, tr("udisksctl не найден")
     try:
         proc = subprocess.run(["udisksctl", "unmount", "-b", device_path],
                               capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     if proc.returncode != 0:
-        return False, (proc.stderr or proc.stdout).strip() or "ошибка размонтирования"
-    return True, "размонтировано"
+        return False, (proc.stderr or proc.stdout).strip() or tr("ошибка размонтирования")
+    return True, tr("размонтировано")

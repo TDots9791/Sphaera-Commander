@@ -1,0 +1,58 @@
+name: Release
+
+# Сборка дистрибутивов и публикация на GitHub Releases по тегу вида v0.12.0.
+# ВНИМАНИЕ: пайплайн ни разу не запускался (в репозитории нет CI-истории) —
+# первый запуск считать проверкой самого пайплайна.
+#
+# Сборка ведётся на ubuntu-22.04 (glibc 2.35) ради совместимости
+# standalone-сборки со старыми дистрибутивами; PySide6 и pypdfium2
+# ставятся wheels'ами (manylinux).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Системные зависимости
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm file
+
+      - name: Python-окружение
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install .
+          .venv/bin/pip install pyinstaller
+
+      - name: Сборка standalone
+        run: sh scripts/build_standalone.sh
+
+      - name: Самопроверка форматов
+        run: SPHAERA_SELFCHECK=1 dist/sphaera-commander/sphaera-commander
+
+      - name: Пакеты RPM и DEB
+        run: |
+          sh scripts/build_rpm.sh
+          sh scripts/build_deb.sh
+
+      - name: Публикация на GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/rpm/x86_64/*.rpm
+            dist/sphaera-commander_*_amd64.deb
+          generate_release_notes: true

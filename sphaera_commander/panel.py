@@ -33,10 +33,10 @@ from .fsmodel import (
     NAME_COL,
     dir_stats,
     human_size,
-    plural,
     scan_directory,
     sort_entries,
 )
+from .i18n import tr, unit
 
 
 class FileView(QTableView):
@@ -294,7 +294,8 @@ class FilePanel(QWidget):
         self._vfs_dir = ""
         if not os.path.isdir(target):
             if not quiet:
-                QMessageBox.warning(self, "Переход", f"Каталог не найден:\n{target}")
+                QMessageBox.warning(self, tr("Переход"),
+                                    tr("Каталог не найден:\n{target}").format(target=target))
             return False
         self._rewatch(target)
         self._pending = target
@@ -314,7 +315,8 @@ class FilePanel(QWidget):
             self._vfs = None
             self._vfs_dir = ""
             if not quiet:
-                QMessageBox.warning(self, "Архив", f"Не удалось открыть:\n{exc}")
+                QMessageBox.warning(self, tr("Архив"),
+                                    tr("Не удалось открыть:\n{exc}").format(exc=exc))
             return False
         self._vfs_dir = norm_member(inner)
         self._rewatch(archive)
@@ -408,7 +410,8 @@ class FilePanel(QWidget):
             return  # устаревший результат более раннего запроса
         self._loading = False
         if payload["error"]:
-            self.status_label.setText(f"не удалось прочитать каталог: {payload['error']}")
+            self.status_label.setText(
+                tr("не удалось прочитать каталог: {error}").format(error=payload["error"]))
             return
         keep = self._reveal_name or self._cursor_name()
         self._reveal_name = None
@@ -550,19 +553,24 @@ class FilePanel(QWidget):
 
     def update_status(self) -> None:
         if self._loading:
-            self.status_label.setText("⏳ чтение каталога…")
+            self.status_label.setText(tr("⏳ чтение каталога…"))
             return
         files, dirs, total, m_count, m_bytes = self.model.summary()
-        text = f"файлов: {files}   папок: {dirs}   {human_size(total)}"
+        text = tr("файлов: {files}   папок: {dirs}   {size}").format(
+            files=files, dirs=dirs, size=human_size(total))
         if m_count:
-            text += f"   •   отмечено: {m_count} ({human_size(m_bytes)})"
+            text += (tr("   •   отмечено: {count} ({size})")
+                     .format(count=m_count, size=human_size(m_bytes)))
         cur = self.current_entry()
         if cur is not None and cur.is_dir and not self.is_vfs:
             st = self._dirinfo_cache.get(cur.path)
             if st is not None:
-                text += (f"   •   {cur.name}: {human_size(st.size)} • "
-                         f"{plural(st.dirs, 'подпапка', 'подпапки', 'подпапок')} • "
-                         f"{plural(st.files, 'файл', 'файла', 'файлов')}")
+                text += tr("   •   {name}: {size} • {dirs} • {files}").format(
+                    name=cur.name, size=human_size(st.size),
+                    dirs=unit(st.dirs, ("подпапка", "подпапки", "подпапок"),
+                              ("subfolder", "subfolders"), "个子文件夹"),
+                    files=unit(st.files, ("файл", "файла", "файлов"),
+                               ("file", "files"), "个文件"))
         self.status_label.setText(text)
 
     def _on_model_reset(self) -> None:

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from .i18n import tr
+
 TEXT_LIMIT = 16 * 1024 * 1024   # показываем не больше 16 МиБ текста
 HEX_LIMIT = 2 * 1024 * 1024     # и 2 МиБ hex-обзора
 HEX_ROW = 16
@@ -51,6 +53,6 @@ def text_preview(path: str, limit: int = TEXT_LIMIT) -> tuple[str, str, bool]:
     raw = raw[:limit]
     text, enc = detect_decode(raw)
     if truncated:
-        text += (f"\n\n[… показаны первые {limit // (1024 * 1024)} МиБ "
-                 f"файла — остальное скрыто …]")
+        text += tr("\n\n[… показаны первые {mib} МиБ файла — остальное скрыто …]").format(
+            mib=limit // (1024 * 1024))
     return text, enc, truncated

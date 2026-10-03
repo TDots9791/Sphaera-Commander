@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .i18n import tr
 from . import legacy_formats as lf
 from . import previewers as pv
 from . import slide_render
@@ -42,11 +43,11 @@ class QuickPreview(QWidget):
         super().__init__(parent)
         self._pending: FileEntry | None = None
 
-        self._info = QLabel("Быстрый просмотр (Ctrl+Q)")
+        self._info = QLabel(tr("Быстрый просмотр (Ctrl+Q)"))
         self._info.setWordWrap(True)
 
         self._stack = QStackedWidget()
-        self._page_info = QLabel("Каталог.\n(Enter — перейти, F3 — открыть файл)")
+        self._page_info = QLabel(tr("Каталог.\n(Enter — перейти, F3 — открыть файл)"))
         self._page_info.setAlignment(Qt.AlignCenter)
         self._page_info.setWordWrap(True)
         self._browser = QTextBrowser()
@@ -82,7 +83,7 @@ class QuickPreview(QWidget):
         try:
             self._load(self._pending)
         except Exception as exc:  # любой формат может оказаться битым
-            self._page("Не удалось показать:\n{exc}".format(exc=exc))
+            self._page(tr("Не удалось показать:\n{exc}").format(exc=exc))
             self._info.setText("")
 
     # -- загрузка -----------------------------------------------------------
@@ -93,7 +94,7 @@ class QuickPreview(QWidget):
 
     def _load(self, entry: FileEntry | None) -> None:
         if entry is None or entry.is_dir:
-            self._page("Каталог.\n(Enter — перейти, F3 — открыть файл)")
+            self._page(tr("Каталог.\n(Enter — перейти, F3 — открыть файл)"))
             self._info.setText("")
             return
         path = entry.path
@@ -109,7 +110,7 @@ class QuickPreview(QWidget):
             img = QImage(data, w, h, stride, QImage.Format.Format_BGR888)
             self._show_pixmap(QPixmap.fromImage(img.copy()))
             self._info.setText(
-                f"{entry.name} • PDF: страница 1 из {count} • F3 — все страницы")
+                tr("{name} • PDF: страница 1 из {count} • F3 — все страницы").format(name=entry.name, count=count))
             return
         if kind == "docx":
             self._set_html(pv.docx_to_html(path))
@@ -134,7 +135,7 @@ class QuickPreview(QWidget):
             if deck["slides"]:
                 pixmap = slide_render.render_slide(deck, deck["slides"][0], 1.0)
                 self._show_pixmap(pixmap)
-                self._info.setText(f"{entry.name} • слайд 1 из {len(deck['slides'])} • F3")
+                self._info.setText(tr("{name} • слайд 1 из {count} • F3").format(name=entry.name, count=len(deck["slides"])))
             return
         if ext in IMAGE_EXTS:
             img = QImage(path)
@@ -150,11 +151,11 @@ class QuickPreview(QWidget):
         except OSError:
             head = b""
         if looks_binary(head):
-            self._page(f"{entry.name}\n\nбинарный файл\n(F3 — hex-обзор)")
+            self._page(f"{entry.name}\n\n" + tr("бинарный файл\n(F3 — hex-обзор)"))
             self._info.setText(f"{human_size(entry.size)}")
             return
 
-        base_info = f"{entry.name} • кодировка: {enc}"
+        base_info = tr("{name} • кодировка: {enc}").format(name=entry.name, enc=enc)
         self._browser.document().setBaseUrl(
             QUrl.fromLocalFile(os.path.dirname(path) or "."))
         if ext == ".md":
@@ -171,7 +172,7 @@ class QuickPreview(QWidget):
             chapters = pv.epub_chapters(path)
             if chapters:
                 self._browser.setHtml(chapters[0][1])
-                base_info += f" • глава 1 из {len(chapters)} (F3 — по главам)"
+                base_info += tr(" • глава 1 из {count} (F3 — по главам)").format(count=len(chapters))
             self._stack.setCurrentIndex(1)
         else:
             self._browser.setPlainText(text)

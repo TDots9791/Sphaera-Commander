@@ -77,6 +77,7 @@ from PySide6.QtWidgets import (
 from . import previewers as pv
 from . import slide_render
 from . import legacy_formats as lf
+from .i18n import tr
 
 TEXT_LIMIT = 16 * 1024 * 1024   # показываем не больше 16 МиБ текста
 HEX_LIMIT = 2 * 1024 * 1024     # и 2 МиБ hex-обзора
@@ -105,7 +106,7 @@ def json_error_position(text: str) -> str | None:
         json.loads(text)
         return None
     except json.JSONDecodeError as exc:
-        return f"строка {exc.lineno}, столбец {exc.colno}: {exc.msg}"
+        return tr("строка {line}, столбец {col}: {msg}").format(line=exc.lineno, col=exc.colno, msg=exc.msg)
     except (ValueError, RecursionError) as exc:
         return str(exc)
 
@@ -255,9 +256,9 @@ def collect_json_tree(data, root: "QTreeWidgetItem", _depth: int = 0) -> int:
         nonlocal count
         count += 1
         if isinstance(value, dict):
-            item = QTreeWidgetItem([str(key), f"объект · {len(value)}"])
+            item = QTreeWidgetItem([str(key), tr("объект · {n}").format(n=len(value))])
         elif isinstance(value, list):
-            item = QTreeWidgetItem([str(key), f"массив · {len(value)}"])
+            item = QTreeWidgetItem([str(key), tr("массив · {n}").format(n=len(value))])
         else:
             item = QTreeWidgetItem([str(key),
                                     json.dumps(value, ensure_ascii=False)])
@@ -401,7 +402,7 @@ class FileViewerDialog(QDialog):
         self.preview = QTextBrowser()
         self.preview.setOpenExternalLinks(True)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(("Узел", "Значение"))
+        self.tree.setHeaderLabels((tr("Узел"), tr("Значение")))
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
 
@@ -431,7 +432,7 @@ class FileViewerDialog(QDialog):
         self.btn_pdf_next = QPushButton("→")
         self.btn_pdf_prev.clicked.connect(lambda: self._pdf_navigate(-1))
         self.btn_pdf_next.clicked.connect(lambda: self._pdf_navigate(1))
-        self.btn_pdf_text = QPushButton("Текст")
+        self.btn_pdf_text = QPushButton(tr("Текст"))
         self.btn_pdf_text.setCheckable(True)
         self.btn_pdf_text.toggled.connect(self._pdf_show_text)
         self.btn_zoom_out = QPushButton("−")
@@ -442,9 +443,9 @@ class FileViewerDialog(QDialog):
         self.btn_pdf_rot_right = QPushButton("↻")
         self.btn_pdf_rot_left.clicked.connect(lambda: self._pdf_rotate(-90))
         self.btn_pdf_rot_right.clicked.connect(lambda: self._pdf_rotate(90))
-        self.btn_pdf_delete = QPushButton("Удалить страницу")
+        self.btn_pdf_delete = QPushButton(tr("Удалить страницу"))
         self.btn_pdf_delete.clicked.connect(self._pdf_delete_page)
-        self.btn_pdf_export = QPushButton("Экспорт страниц…")
+        self.btn_pdf_export = QPushButton(tr("Экспорт страниц…"))
         self.btn_pdf_export.clicked.connect(self._pdf_export)
         pdf_bar = QHBoxLayout()
         pdf_bar.addWidget(self.lbl_pdf_page)
@@ -493,16 +494,16 @@ class FileViewerDialog(QDialog):
 
         # -- строка поиска/замены
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Поиск (Enter — далее)")
+        self.search.setPlaceholderText(tr("Поиск (Enter — далее)"))
         self.search.returnPressed.connect(self._find_next)
-        btn_find = QPushButton("Найти")
+        btn_find = QPushButton(tr("Найти"))
         btn_find.clicked.connect(self._find_next)
 
         self.replace_edit = QLineEdit()
-        self.replace_edit.setPlaceholderText("Заменить на")
-        btn_replace = QPushButton("Заменить")
+        self.replace_edit.setPlaceholderText(tr("Заменить на"))
+        btn_replace = QPushButton(tr("Заменить"))
         btn_replace.clicked.connect(self._replace_one)
-        btn_replace_all = QPushButton("Все")
+        btn_replace_all = QPushButton(tr("Все"))
         btn_replace_all.clicked.connect(self._replace_all)
         self.replace_row = QWidget()
         rrow = QHBoxLayout(self.replace_row)
@@ -513,35 +514,35 @@ class FileViewerDialog(QDialog):
         self.replace_row.hide()
 
         # -- кнопки режима
-        self.btn_replace_toggle = QPushButton("Заменить…")
+        self.btn_replace_toggle = QPushButton(tr("Заменить…"))
         self.btn_replace_toggle.setCheckable(True)
         self.btn_replace_toggle.setShortcut(QKeySequence("Ctrl+H"))
         self.btn_replace_toggle.toggled.connect(self.replace_row.setVisible)
 
-        self.btn_wrap = QPushButton("Перенос")
+        self.btn_wrap = QPushButton(tr("Перенос строк"))
         self.btn_wrap.setCheckable(True)
-        self.btn_wrap.setToolTip("Переносить длинные строки")
+        self.btn_wrap.setToolTip(tr("Переносить длинные строки"))
         self.btn_wrap.toggled.connect(self._toggle_wrap)
 
-        self.btn_format = QPushButton("Форматировать")
+        self.btn_format = QPushButton(tr("Форматировать"))
         self.btn_format.setShortcut(QKeySequence("Ctrl+Shift+F"))
-        self.btn_format.setToolTip("Форматировать JSON (Ctrl+Shift+F)")
+        self.btn_format.setToolTip(tr("Форматировать JSON (Ctrl+Shift+F)"))
         self.btn_format.clicked.connect(self._format_json)
 
-        self.btn_tree = QPushButton("Дерево")
+        self.btn_tree = QPushButton(tr("Дерево"))
         self.btn_tree.setCheckable(True)
         self.btn_tree.setShortcut(QKeySequence("Ctrl+T"))
-        self.btn_tree.setToolTip("Дерево JSON (Ctrl+T)")
+        self.btn_tree.setToolTip(tr("Дерево JSON (Ctrl+T)"))
         self.btn_tree.toggled.connect(self._toggle_tree)
 
-        self.btn_preview = QPushButton("Предпросмотр")
+        self.btn_preview = QPushButton(tr("Предпросмотр"))
         self.btn_preview.setCheckable(True)
         self.btn_preview.setShortcut(QKeySequence("Ctrl+Shift+P"))
-        self.btn_preview.setToolTip("Исходник/предпросмотр (Ctrl+Shift+P)")
+        self.btn_preview.setToolTip(tr("Исходник/предпросмотр (Ctrl+Shift+P)"))
         self.btn_preview.toggled.connect(self._toggle_preview)
 
-        btn_prev = QPushButton("← Пред. (Alt+↑)")
-        btn_next = QPushButton("След. (Alt+↓) →")
+        btn_prev = QPushButton(tr("← Пред. (Alt+↑)"))
+        btn_next = QPushButton(tr("След. (Alt+↓) →"))
         btn_prev.clicked.connect(lambda: self.navigate(-1))
         btn_next.clicked.connect(lambda: self.navigate(1))
 
@@ -597,7 +598,8 @@ class FileViewerDialog(QDialog):
             self.reject()
             return
         path = self.files[self.index]
-        self.setWindowTitle(f"{'Правка' if self.editable else 'Просмотр'}: {path}")
+        self.setWindowTitle(tr("{mode}: {path}").format(
+            mode=tr("Правка") if self.editable else tr("Просмотр"), path=path))
         self.image_label.hide()
         self.stack.show()
         self.stack.setCurrentIndex(0)
@@ -629,7 +631,7 @@ class FileViewerDialog(QDialog):
             self.stack.hide()
             self.image_label.show()
             self._fit_image()
-            self.lbl_info.setText(f"изображение {img.width()}×{img.height()}")
+            self.lbl_info.setText(tr("изображение {w}×{h}").format(w=img.width(), h=img.height()))
             self.search.setEnabled(False)
             self.btn_replace_toggle.hide()
             self.btn_wrap.hide()
@@ -643,16 +645,16 @@ class FileViewerDialog(QDialog):
         except OSError as exc:
             self.kind = "binary"
             self.btn_replace_toggle.hide()
-            self.text_edit.setPlainText(f"<не удалось прочитать файл: {exc}>")
+            self.text_edit.setPlainText(f"<" + tr("не удалось прочитать файл: {exc}").format(exc=exc) + ">")
             return
         if looks_binary(head):
             self.kind = "binary"
             self.btn_replace_toggle.hide()
             self.btn_wrap.hide()
             self.text_edit.setPlainText(hexdump(raw[:HEX_LIMIT])
-                                        + ("\n[… hex-обзор ограничен 2 МиБ …]"
+                                        + (tr("\n[… hex-обзор ограничен 2 МиБ …]")
                                            if len(raw) > HEX_LIMIT else ""))
-            self.lbl_info.setText("бинарный файл (hex-обзор)")
+            self.lbl_info.setText(tr("бинарный файл (hex-обзор)"))
             self.text_edit.setReadOnly(True)
             return
 
@@ -660,7 +662,8 @@ class FileViewerDialog(QDialog):
         self.encoding = enc
         self.text_edit.setPlainText(text)
         self.text_edit.setReadOnly(not self.editable)
-        self._info_base = f"кодировка: {enc}" + (" (обрезано)" if truncated else "")
+        self._info_base = tr("кодировка: {enc}").format(enc=enc) \
+            + (tr(" (обрезано)") if truncated else "")
         ext = os.path.splitext(path)[1].lower()
         if ext in JSON_EXTS:
             self.kind = "json"
@@ -724,8 +727,8 @@ class FileViewerDialog(QDialog):
             self.btn_wrap.hide()
             self.stack.setCurrentIndex(0)
             self.stack.show()
-            self.text_edit.setPlainText(f"<не удалось открыть ({kind}):\n{exc}>")
-            self.lbl_info.setText("ошибка открытия")
+            self.text_edit.setPlainText(f"<" + tr("не удалось открыть ({kind}):\n{exc}").format(kind=kind, exc=exc) + ">")
+            self.lbl_info.setText(tr("ошибка открытия"))
             return
         QApplication.restoreOverrideCursor()
         self._update_cursor_status()
@@ -737,7 +740,7 @@ class FileViewerDialog(QDialog):
         self._pdf_path = path
         self._pdf_count = pv.pdf_page_count(path)
         if self._pdf_count == 0:
-            raise ValueError("в файле нет страниц")
+            raise ValueError(tr("в файле нет страниц"))
         self._pdf_index = 0
         self._pdf_scale = 2.0
         for b in (self.btn_pdf_prev, self.btn_pdf_next, self.btn_zoom_in,
@@ -762,17 +765,18 @@ class FileViewerDialog(QDialog):
                 self._pdf_scale)
             self.pdf_label.setPixmap(pixmap)
             self.lbl_pdf_page.setText(
-                f"слайд {self._pdf_index + 1} из {self._pdf_count}")
-            self.lbl_info.setText(f"pptx: {self._pdf_count} слайд(ов) • "
-                                  f"масштаб {self._pdf_scale:.2f}x • свой рендер")
+                tr("слайд {n} из {total}").format(n=self._pdf_index + 1, total=self._pdf_count))
+            self.lbl_info.setText(tr("pptx: {total} слайд(ов) • масштаб {scale:.2f}x • свой рендер").format(
+                total=self._pdf_count, scale=self._pdf_scale))
             return
         data, w, h, stride = pv.pdf_render(self._pdf_path, self._pdf_index,
                                            self._pdf_scale)
         img = QImage(data, w, h, stride, QImage.Format.Format_BGR888)
         self.pdf_label.setPixmap(QPixmap.fromImage(img.copy()))
-        self.lbl_pdf_page.setText(f"стр. {self._pdf_index + 1} из {self._pdf_count}")
-        self.lbl_info.setText(f"PDF: {self._pdf_count} стр. • масштаб {self._pdf_scale:.2f}x"
-                              + (" • F4 — правка" if self.editable else ""))
+        self.lbl_pdf_page.setText(tr("стр. {n} из {total}").format(n=self._pdf_index + 1, total=self._pdf_count))
+        self.lbl_info.setText(tr("PDF: {total} стр. • масштаб {scale:.2f}x").format(
+                total=self._pdf_count, scale=self._pdf_scale)
+                              + (tr(" • F4 — правка") if self.editable else ""))
 
     def _pdf_navigate(self, delta: int) -> None:
         new_index = self._pdf_index + delta
@@ -810,15 +814,15 @@ class FileViewerDialog(QDialog):
 
     def _pdf_delete_page(self) -> None:
         ret = QMessageBox.question(
-            self, "Удаление страницы",
-            f"Удалить страницу {self._pdf_index + 1} из {self._pdf_count}?",
+            self, tr("Удаление страницы"),
+            tr("Удалить страницу {n} из {total}?").format(n=self._pdf_index + 1, total=self._pdf_count),
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ret != QMessageBox.Yes:
             return
         pv.pdf_delete_pages(self._pdf_path, [self._pdf_index])
         self._pdf_count -= 1
         if self._pdf_count == 0:
-            self.lbl_info.setText("PDF: страниц не осталось")
+            self.lbl_info.setText(tr("PDF: страниц не осталось"))
             self.reject()
             return
         self._pdf_index = min(self._pdf_index, self._pdf_count - 1)
@@ -826,24 +830,24 @@ class FileViewerDialog(QDialog):
 
     def _pdf_export(self) -> None:
         text, ok = QInputDialog.getText(
-            self, "Экспорт страниц",
-            f"Страницы (например 1-3,5; всего {self._pdf_count}):",
+            self, tr("Экспорт страниц"),
+            tr("Страницы (например 1-3,5; всего {total}):").format(total=self._pdf_count),
             text=str(self._pdf_index + 1))
         if not ok or not text.strip():
             return
         try:
             indices = pv.parse_ranges(text, self._pdf_count)
         except ValueError:
-            QMessageBox.warning(self, "Экспорт", "Неверный диапазон страниц")
+            QMessageBox.warning(self, tr("Экспорт"), tr("Неверный диапазон страниц"))
             return
         base = os.path.splitext(self._pdf_path)[0]
         out, _filter = QFileDialog.getSaveFileName(
-            self, "Экспорт страниц PDF", base + "-страницы.pdf", "PDF (*.pdf)")
+            self, tr("Экспорт страниц PDF"), base + tr("-страницы.pdf"), "PDF (*.pdf)")
         if not out:
             return
         pv.pdf_export_pages(self._pdf_path, indices, out)
-        QMessageBox.information(self, "Экспорт",
-                                f"Сохранено страниц: {len(indices)}\n{out}")
+        QMessageBox.information(self, tr("Экспорт"),
+                                tr("Сохранено страниц: {n}\n{out}").format(n=len(indices), out=out))
 
     # docx -------------------------------------------------------------------
 
@@ -855,12 +859,13 @@ class FileViewerDialog(QDialog):
             self.text_edit.setPlainText("\n".join(lines))
             self.text_edit.setReadOnly(False)
             self.stack.setCurrentIndex(0)
-            self._info_base = ("docx: правка по абзацам (стиль абзаца сохраняется, "
-                               "встроенное форматирование меняемых абзацев теряется)")
+            self._info_base = tr(
+                "docx: правка по абзацам (стиль абзаца сохраняется, "
+                "встроенное форматирование меняемых абзацев теряется)")
             self.lbl_info.setText(self._info_base)
         else:
             self._set_document_html(pv.docx_to_html(path))
-            self.lbl_info.setText("docx: просмотр • F4 — правка по абзацам")
+            self.lbl_info.setText(tr("docx: просмотр • F4 — правка по абзацам"))
 
     def _set_document_html(self, html: str) -> None:
         self.preview.setHtml(html)
@@ -873,7 +878,7 @@ class FileViewerDialog(QDialog):
         extract_dir = self._make_temp_dir()
         self._doc_items = pv.epub_chapters(path, extract_dir)
         if not self._doc_items:
-            raise ValueError("в книге нет текстовых глав")
+            raise ValueError(tr("в книге нет текстовых глав"))
         self.doc_combo.blockSignals(True)
         self.doc_combo.clear()
         for title, _xhtml, _base in self._doc_items:
@@ -883,14 +888,14 @@ class FileViewerDialog(QDialog):
         self.doc_combo.setCurrentIndex(0)
         self._on_doc_combo(0)  # сигналы combo были заблокированы
         self.stack.setCurrentIndex(1)
-        self.lbl_info.setText(f"epub: глав {len(self._doc_items)} • "
-                              "изображения показываются, CSS упрощён")
+        self.lbl_info.setText(tr("epub: глав {n} • изображения показываются, CSS упрощён").format(
+                n=len(self._doc_items)))
 
     def _load_pptx(self, path: str) -> None:
         images_dir = self._make_temp_dir()
         deck = pv.pptx_slides_rich(path, images_dir)
         if not deck["slides"]:
-            raise ValueError("в презентации нет слайдов")
+            raise ValueError(tr("в презентации нет слайдов"))
         self.kind = "pptx"
         self._deck = deck
         self._slides_text = pv.pptx_slides(path)
@@ -933,9 +938,9 @@ class FileViewerDialog(QDialog):
         self.text_edit.setPlainText(text)
         self.text_edit.setReadOnly(not self.editable)
         self.stack.setCurrentIndex(0)
-        self._info_base = "RTF • правка: абзацы (форматирование упрощается)"
+        self._info_base = tr("RTF • правка: абзацы (форматирование упрощается)")
         self.lbl_info.setText(self._info_base if self.editable
-                              else "RTF • просмотр • F4 — правка")
+                              else tr("RTF • просмотр • F4 — правка"))
         self._update_cursor_status()
 
     def _load_doc(self, path: str) -> None:
@@ -945,17 +950,17 @@ class FileViewerDialog(QDialog):
         self.text_edit.setPlainText(text)
         self.text_edit.setReadOnly(not self.editable)
         self.stack.setCurrentIndex(0)
-        self._info_base = "DOC • текст"
+        self._info_base = tr("DOC • текст")
         self.lbl_info.setText(
-            "DOC • правка: Ctrl+S предложит сохранить как RTF/DOCX"
-            if self.editable else "DOC • просмотр (antiword/catdoc) • F4 — правка")
+            tr("DOC • правка: Ctrl+S предложит сохранить как RTF/DOCX")
+            if self.editable else tr("DOC • просмотр (antiword/catdoc) • F4 — правка"))
         self._update_cursor_status()
 
     def _load_xls(self, path: str) -> None:
         self.kind = "xls"
         sheets = lf.xls_sheets(path)
         if not sheets:
-            raise ValueError("в книге нет листов")
+            raise ValueError(tr("в книге нет листов"))
         self._xls_sheets_cache = sheets
         self._grid_sources = [("rows", name, rows) for name, rows in sheets]
         self.sheet_combo.blockSignals(True)
@@ -989,8 +994,8 @@ class FileViewerDialog(QDialog):
         delim = pv.csv_sniff_delimiter(text)
         self._grid_sources = [("csv", text, delim)]
         self.sheet_combo.hide()
-        note = " (обрезано)" if truncated else ""
-        self._info_base = f"CSV: кодировка {enc}, разделитель {delim!r}{note}"
+        note = tr(" (обрезано)") if truncated else ""
+        self._info_base = tr("CSV: кодировка {enc}, разделитель {delim!r}{note}").format(enc=enc, delim=delim, note=note)
         self._select_sheet(0, info_base=self._info_base)
         self.stack.setCurrentIndex(4)
 
@@ -1003,7 +1008,7 @@ class FileViewerDialog(QDialog):
             self._grid_info_base = info_base
             self.sheet_model.append_rows(b)
             self.lbl_info.setText((info_base + " • " if info_base else "")
-                                  + f"строк: {self.sheet_model.rowCount()}")
+                                  + tr("строк: {n}").format(n=self.sheet_model.rowCount()))
             return
         if kind == "xlsx":
             factory = lambda: pv.xlsx_rows_iter(a, b)  # noqa: E731
@@ -1017,7 +1022,7 @@ class FileViewerDialog(QDialog):
         self.sheet_model.reset_rows()
         self._grid_info_base = info_base
         self.lbl_info.setText((info_base + " • " if info_base else "")
-                              + f"чтение {title}…")
+                              + tr("чтение {title}…").format(title=title))
         self._grid_error = ""
 
         def worker():
@@ -1040,11 +1045,11 @@ class FileViewerDialog(QDialog):
         if payload.get("done"):
             if payload.get("error"):
                 self._grid_error = payload["error"]
-                self.lbl_info.setText(f"ошибка чтения: {payload['error']}")
+                self.lbl_info.setText(tr("ошибка чтения: {err}").format(err=payload["error"]))
             else:
                 base = self._grid_info_base
                 self.lbl_info.setText((base + " • " if base else "")
-                                      + f"строк: {self.sheet_model.rowCount()}")
+                                      + tr("строк: {n}").format(n=self.sheet_model.rowCount()))
 
     def _on_sheet_changed(self, index: int) -> None:
         self._select_sheet(index)
@@ -1058,7 +1063,7 @@ class FileViewerDialog(QDialog):
             QUrl.fromLocalFile(os.path.dirname(path) or "."))
         self.preview.setHtml(text)
         self.stack.setCurrentIndex(1)
-        self.lbl_info.setText(f"HTML • кодировка: {enc}")
+        self.lbl_info.setText(tr("HTML • кодировка: {enc}").format(enc=enc))
 
     def _load_fb2(self, path: str) -> None:
         self.kind = "fb2"
@@ -1078,7 +1083,7 @@ class FileViewerDialog(QDialog):
         self.encoding = enc
         self.text_edit.setPlainText(text)
         self.text_edit.setReadOnly(not self.editable)
-        self._info_base = f"XML • кодировка: {enc}" + (" (обрезано)" if truncated else "")
+        self._info_base = tr("XML • кодировка: {enc}").format(enc=enc) + (tr(" (обрезано)") if truncated else "")
         self.lbl_info.setText(self._info_base)
         self.stack.setCurrentIndex(0)
 
@@ -1086,7 +1091,7 @@ class FileViewerDialog(QDialog):
         try:
             _root_name, node = pv.xml_tree(self._xml_path())
         except ET.ParseError as exc:
-            self.lbl_info.setText(f"{self._info_base} • дерево недоступно: {exc}")
+            self.lbl_info.setText(f"{self._info_base} • " + tr("дерево недоступно: {exc}").format(exc=exc))
             return False
 
         def add(parent, node):
@@ -1146,7 +1151,7 @@ class FileViewerDialog(QDialog):
         if on:
             self._render_markdown(self.text_edit.toPlainText())
         self.stack.setCurrentIndex(1 if on else 0)
-        self.btn_preview.setText("Исходник" if on else "Предпросмотр")
+        self.btn_preview.setText(tr("Исходник") if on else tr("Предпросмотр"))
         if not force:
             self.btn_preview.setChecked(on)
 
@@ -1177,8 +1182,8 @@ class FileViewerDialog(QDialog):
             self.lbl_info.setText(self._info_base)
             return
         error = json_error_position(text)
-        suffix = (" • JSON: OK" if error is None
-                  else f" • JSON: ошибка ({error})")
+        suffix = (tr(" • JSON: OK") if error is None
+                  else tr(" • JSON: ошибка ({err})").format(err=error))
         self.lbl_info.setText(self._info_base + suffix)
 
     def _format_json(self) -> None:
@@ -1189,11 +1194,12 @@ class FileViewerDialog(QDialog):
             data = json.loads(text)
         except json.JSONDecodeError as exc:
             self.lbl_info.setText(
-                f"{self._info_base} • не отформатировано — ошибка "
-                f"(строка {exc.lineno}, столбец {exc.colno}): {exc.msg}")
+                f"{self._info_base} • "
+                + tr("не отформатировано — ошибка (строка {line}, столбец {col}): {msg}").format(
+                    line=exc.lineno, col=exc.colno, msg=exc.msg))
             return
         except (ValueError, RecursionError) as exc:
-            self.lbl_info.setText(f"{self._info_base} • не отформатировано: {exc}")
+            self.lbl_info.setText(f"{self._info_base} • " + tr("не отформатировано: {exc}").format(exc=exc))
             return
         pretty = json.dumps(data, ensure_ascii=False, indent=4) + "\n"
         self.text_edit.setPlainText(pretty)
@@ -1226,7 +1232,7 @@ class FileViewerDialog(QDialog):
         try:
             data = json.loads(self.text_edit.toPlainText())
         except (json.JSONDecodeError, ValueError, RecursionError) as exc:
-            self.lbl_info.setText(f"{self._info_base} • дерева нет — ошибка: {exc}")
+            self.lbl_info.setText(f"{self._info_base} • " + tr("дерева нет — ошибка: {exc}").format(exc=exc))
             self.tree.clear()
             return False
         self.tree.clear()
@@ -1241,7 +1247,7 @@ class FileViewerDialog(QDialog):
         if needle and not self.text_edit.find(needle):
             self.text_edit.moveCursor(QTextCursor.Start)
             if not self.text_edit.find(needle):
-                self.lbl_info.setText(f"не найдено: {needle}")
+                self.lbl_info.setText(tr("не найдено: {needle}").format(needle=needle))
 
     def _replace_one(self) -> None:
         needle, replacement = self.search.text(), self.replace_edit.text()
@@ -1252,7 +1258,7 @@ class FileViewerDialog(QDialog):
             self._find_next()  # с начала документа
             cursor = self.text_edit.document().find(needle, self.text_edit.textCursor())
             if not not cursor.isNull():
-                self.lbl_info.setText(f"не найдено: {needle}")
+                self.lbl_info.setText(tr("не найдено: {needle}").format(needle=needle))
                 return
         cursor.insertText(replacement)
         self.text_edit.setTextCursor(cursor)
@@ -1268,13 +1274,13 @@ class FileViewerDialog(QDialog):
             cursor.insertText(replacement)
             count += 1
             cursor = document.find(needle, cursor)
-        self.lbl_info.setText(f"заменено: {count}")
+        self.lbl_info.setText(tr("заменено: {n}").format(n=count))
 
     def _ask_goto_line(self) -> None:
         if self.text_edit.isReadOnly():
             return
         line, ok = QInputDialog.getInt(
-            self, "Перейти на строку", "Номер строки:",
+            self, tr("Перейти на строку"), tr("Номер строки:"),
             value=self.text_edit.textCursor().blockNumber() + 1,
             min=1, max=max(1, self.text_edit.document().blockCount()))
         if ok:
@@ -1289,8 +1295,8 @@ class FileViewerDialog(QDialog):
     def _update_cursor_status(self) -> None:
         cursor = self.text_edit.textCursor()
         self.lbl_pos.setText(
-            f"строка {cursor.blockNumber() + 1}, "
-            f"столбец {cursor.positionInBlock() + 1}")
+            tr("строка {line}, столбец {col}").format(
+                line=cursor.blockNumber() + 1, col=cursor.positionInBlock() + 1))
 
     def _make_temp_dir(self) -> str:
         d = tempfile.mkdtemp(prefix="sphaera-view-")
@@ -1326,8 +1332,8 @@ class FileViewerDialog(QDialog):
         text = self.text_edit.toPlainText()
         if self.kind == "xls":
             ret = QMessageBox.question(
-                self, "Сохранение XLS",
-                "Формулы и стили будут заменены значениями. Продолжить?",
+                self, tr("Сохранение XLS"),
+                tr("Формулы и стили будут заменены значениями. Продолжить?"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if ret != QMessageBox.Yes:
                 return
@@ -1340,26 +1346,26 @@ class FileViewerDialog(QDialog):
             try:
                 lf.xls_save(path, sheets_out)
             except Exception as exc:
-                QMessageBox.critical(self, "Ошибка",
-                                     f"Не удалось сохранить XLS:\n{exc}")
+                QMessageBox.critical(self, tr("Ошибка"),
+                                     tr("Не удалось сохранить XLS:\n{exc}").format(exc=exc))
                 return
             self.sheet_model.dirty = False
-            self.lbl_info.setText("сохранено (XLS, значения)")
+            self.lbl_info.setText(tr("сохранено (XLS, значения)"))
             return
         if self.kind == "rtf":
             try:
                 lf.save_rtf(path, text.splitlines())
             except OSError as exc:
-                QMessageBox.critical(self, "Ошибка",
-                                     f"Не удалось сохранить RTF:\n{exc}")
+                QMessageBox.critical(self, tr("Ошибка"),
+                                     tr("Не удалось сохранить RTF:\n{exc}").format(exc=exc))
                 return
             self.text_edit.document().setModified(False)
-            self.lbl_info.setText("сохранено (RTF)")
+            self.lbl_info.setText(tr("сохранено (RTF)"))
             return
         if self.kind == "doc":
             base = os.path.splitext(path)[0]
             out, _flt = QFileDialog.getSaveFileName(
-                self, "Двоичный DOC перезаписать нельзя — сохранить как",
+                self, tr("Двоичный DOC перезаписать нельзя — сохранить как"),
                 base + ".rtf", "RTF (*.rtf);;DOCX (*.docx)")
             if not out:
                 return
@@ -1374,28 +1380,28 @@ class FileViewerDialog(QDialog):
                 else:
                     lf.save_rtf(out, text.splitlines())
             except Exception as exc:
-                QMessageBox.critical(self, "Ошибка",
-                                     f"Не удалось сохранить:\n{exc}")
+                QMessageBox.critical(self, tr("Ошибка"),
+                                     tr("Не удалось сохранить:\n{exc}").format(exc=exc))
                 return
             self.text_edit.document().setModified(False)
-            self.lbl_info.setText(f"сохранено: {os.path.basename(out)}")
+            self.lbl_info.setText(tr("сохранено: {name}").format(name=os.path.basename(out)))
             return
         if self.kind == "docx":
             try:
                 pv.docx_save_paragraphs(path, text.splitlines())
             except Exception as exc:
-                QMessageBox.critical(self, "Ошибка",
-                                     f"Не удалось сохранить docx:\n{exc}")
+                QMessageBox.critical(self, tr("Ошибка"),
+                                     tr("Не удалось сохранить docx:\n{exc}").format(exc=exc))
                 return
             self.text_edit.document().setModified(False)
-            self.lbl_info.setText("сохранено (docx)")
+            self.lbl_info.setText(tr("сохранено (docx)"))
             return
         if self.kind == "json":
             error = json_error_position(text)
             if error is not None:
                 ret = QMessageBox.question(
-                    self, "JSON некорректен",
-                    f"В файле ошибка JSON ({error}).\nСохранить как есть?",
+                    self, tr("JSON некорректен"),
+                    tr("В файле ошибка JSON ({err}).\nСохранить как есть?").format(err=error),
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if ret != QMessageBox.Yes:
                     return
@@ -1403,9 +1409,9 @@ class FileViewerDialog(QDialog):
             data = text.encode(self.encoding)
         except UnicodeEncodeError:
             ret = QMessageBox.question(
-                self, "Кодировка",
-                f"Текст не сохраняется в {self.encoding} без потерь.\n"
-                "Сохранить как UTF-8?")
+                self, tr("Кодировка"),
+                tr("Текст не сохраняется в {enc} без потерь.\nСохранить как UTF-8?").format(
+                    enc=self.encoding))
             if ret == QMessageBox.Yes:
                 self.encoding = "utf-8"
                 data = text.encode("utf-8")
@@ -1415,10 +1421,10 @@ class FileViewerDialog(QDialog):
             with open(path, "wb") as f:
                 f.write(data)
         except OSError as exc:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить:\n{exc}")
+            QMessageBox.critical(self, tr("Ошибка"), tr("Не удалось сохранить:\n{exc}").format(exc=exc))
             return
         self.text_edit.document().setModified(False)
-        self.lbl_info.setText(f"сохранено ({self.encoding})")
+        self.lbl_info.setText(tr("сохранено ({enc})").format(enc=self.encoding))
         if self.kind == "md" and self.btn_preview.isChecked():
             self._render_markdown(text)
 
@@ -1426,8 +1432,8 @@ class FileViewerDialog(QDialog):
         grid_dirty = self.kind == "xls" and self.sheet_model.dirty
         if grid_dirty:
             ret = QMessageBox.question(
-                self, "Есть изменения",
-                "Таблица изменена. Сохранить XLS (формулы → значения)?",
+                self, tr("Есть изменения"),
+                tr("Таблица изменена. Сохранить XLS (формулы → значения)?"),
                 QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
                 QMessageBox.Cancel)
             if ret == QMessageBox.Cancel:
@@ -1439,8 +1445,8 @@ class FileViewerDialog(QDialog):
         if (self.editable and not self.text_edit.isReadOnly()
                 and self.text_edit.document().isModified()):
             ret = QMessageBox.question(
-                self, "Есть изменения",
-                "Файл изменён. Сохранить перед закрытием?",
+                self, tr("Есть изменения"),
+                tr("Файл изменён. Сохранить перед закрытием?"),
                 QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
                 QMessageBox.Cancel)
             if ret == QMessageBox.Cancel:

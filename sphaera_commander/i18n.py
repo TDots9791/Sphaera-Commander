@@ -1,0 +1,447 @@
+"""Локализация интерфейса: русский (по умолчанию), английский, китайский.
+
+Строки-ключи — русские; tr() отдаёт перевод для текущего языка. Отсутствие
+перевода не «пустит пустоту» — вернётся русский ключ. Язык выбирается в
+меню «Вид → Язык / Language / 语言» и применяется при следующем запуске
+(config: view/language). Полнота словаря для en/zh проверяется тестами.
+"""
+
+from __future__ import annotations
+
+LANG = "ru"  # "ru" | "en" | "zh" — выставляется из config при старте приложения
+LANGUAGES = (("ru", "Русский"), ("en", "English"), ("zh", "中文"))
+
+# {ключ (русский): (english, 中文)} — генерируется в _STRINGS ниже.
+_T = {
+    "\n\n[… показаны первые {mib} МиБ файла — остальное скрыто …]":
+        ("\n\n[… first {mib} MiB of the file shown — the rest is hidden …]",
+         "\n\n[… 仅显示文件的前 {mib} MiB — 其余内容已隐藏 …]"),
+    "\n[… hex-обзор ограничен 2 МиБ …]":
+        ("\n[… hex view limited to 2 MiB …]", "\n[… 十六进制查看限制为 2 MiB …]"),
+    "\nОперация прервана пользователем.":
+        ("\nOperation cancelled by user.", "\n操作已被用户中断。"),
+    "\n… и ещё {n}": ("\n… and {n} more", "\n… 还有 {n} 项"),
+    "   •   отмечено: {count} ({size})":
+        ("   •   marked: {count} ({size})", "   •   已标记：{count}（{size}）"),
+    " (обрезано)": (" (truncated)", "（已截断）"),
+    " • F4 — правка": (" • F4 — edit", " • F4 — 编辑"),
+    " • JSON: OK": (" • JSON: OK", " • JSON：正常"),
+    " • JSON: ошибка ({err})": (" • JSON: error ({err})", " • JSON：错误（{err}）"),
+    " • глава 1 из {count} (F3 — по главам)":
+        (" • chapter 1 of {count} (F3 — by chapters)", " • 第 1 章，共 {count} 章（F3 — 按章浏览）"),
+    " • ошибок: {n}": (" • errors: {n}", " • 错误：{n}"),
+    " • прервано": (" • cancelled", " • 已中断"),
+    " … и ещё {n}": (" … and {n} more", " … 还有 {n} 项"),
+    "$ {cmd}\nкод выхода: {code}": ("$ {cmd}\nexit code: {code}", "$ {cmd}\n退出代码：{code}"),
+    "$ {cmd} — готово": ("$ {cmd} — done", "$ {cmd} — 完成"),
+    "&Вид": ("&View", "查看(&V)"),
+    "&Панели": ("&Panels", "面板(&P)"),
+    "&Справка": ("&Help", "帮助(&H)"),
+    "&Файл": ("&File", "文件(&F)"),
+    "(без вывода)": ("(no output)", "（无输出）"),
+    "-страницы.pdf": ("-страницы.pdf", "-страницы.pdf"),
+    "CSV: кодировка {enc}, разделитель {delim!r}{note}":
+        ("CSV: encoding {enc}, delimiter {delim!r}{note}",
+         "CSV：编码 {enc}，分隔符 {delim!r}{note}"),
+    "DOC • правка: Ctrl+S предложит сохранить как RTF/DOCX":
+        ("DOC • edit: Ctrl+S will offer to save as RTF/DOCX",
+         "DOC • 编辑：Ctrl+S 将提示另存为 RTF/DOCX"),
+    "DOC • просмотр (antiword/catdoc) • F4 — правка":
+        ("DOC • view (antiword/catdoc) • F4 — edit", "DOC • 查看（antiword/catdoc）• F4 — 编辑"),
+    "DOC • текст": ("DOC • text", "DOC • 文本"),
+    "HTML • кодировка: {enc}": ("HTML • encoding: {enc}", "HTML • 编码：{enc}"),
+    "JSON некорректен": ("Invalid JSON", "JSON 无效"),
+    "PDF: {total} стр. • масштаб {scale:.2f}x":
+        ("PDF: {total} p. • zoom {scale:.2f}x", "PDF：共 {total} 页 • 缩放 {scale:.2f}x"),
+    "PDF: страниц не осталось": ("PDF: no pages left", "PDF：没有剩余页面"),
+    "RTF • правка: абзацы (форматирование упрощается)":
+        ("RTF • edit: paragraphs (formatting is simplified)", "RTF • 编辑：段落（格式会被简化）"),
+    "RTF • просмотр • F4 — правка": ("RTF • view • F4 — edit", "RTF • 查看 • F4 — 编辑"),
+    "Sphaera Commander — двухпанельный файловый менеджер":
+        ("Sphaera Commander — dual-panel file manager", "Sphaera Commander — 双栏文件管理器"),
+    "XML • кодировка: {enc}": ("XML • encoding: {enc}", "XML • 编码：{enc}"),
+    "cd: каталог не найден: {path}": ("cd: directory not found: {path}", "cd：未找到目录：{path}"),
+    "docx: правка по абзацам (стиль абзаца сохраняется, встроенное форматирование меняемых абзацев теряется)":
+        ("docx: edit by paragraphs (paragraph style is preserved, inline formatting of edited paragraphs is lost)",
+         "docx：按段落编辑（保留段落样式，被编辑段落的内联格式会丢失）"),
+    "docx: просмотр • F4 — правка по абзацам":
+        ("docx: view • F4 — edit by paragraphs", "docx：查看 • F4 — 按段落编辑"),
+    "epub: глав {n} • изображения показываются, CSS упрощён":
+        ("epub: {n} chapters • images shown, CSS simplified", "epub：共 {n} 章 • 显示图片，CSS 已简化"),
+    "pptx: {total} слайд(ов) • масштаб {scale:.2f}x • свой рендер":
+        ("pptx: {total} slide(s) • zoom {scale:.2f}x • built-in renderer",
+         "pptx：共 {total} 张幻灯片 • 缩放 {scale:.2f}x • 内置渲染"),
+    "udisksctl не найден": ("udisksctl not found", "未找到 udisksctl"),
+    "{action} {count} объект(ов) из\n{dir}?\n\n{names}":
+        ("{action} {count} item(s) from\n{dir}?\n\n{names}",
+         "将{action} {dir} 中的 {count} 个项目？\n\n{names}"),
+    "{mode}: {path}": ("{mode}: {path}", "{mode}：{path}"),
+    "{name} • PDF: страница 1 из {count} • F3 — все страницы":
+        ("{name} • PDF: page 1 of {count} • F3 — all pages",
+         "{name} • PDF：第 1 页，共 {count} 页 • F3 — 所有页面"),
+    "{name} • кодировка: {enc}": ("{name} • encoding: {enc}", "{name} • 编码：{enc}"),
+    "{name} • слайд 1 из {count} • F3":
+        ("{name} • slide 1 of {count} • F3", "{name} • 第 1 张幻灯片，共 {count} 张 • F3"),
+    "{old} — {err}": ("{old} — {err}", "{old} — {err}"),
+    "{old} — назначение уже существует: {new}":
+        ("{old} — destination already exists: {new}", "{old} — 目标已存在：{new}"),
+    "{out}\nПерезаписать?": ("{out}\nOverwrite?", "{out}\n是否覆盖？"),
+    "{path}:\n{message}": ("{path}:\n{message}", "{path}：\n{message}"),
+    "Архив": ("Archive", "压缩包"),
+    "Архив в панели назначения открыт только для чтения":
+        ("The archive in the destination panel is read-only", "目标面板中的压缩包为只读"),
+    "Было": ("Old name", "原名"),
+    "Быстрый просмотр (Ctrl+Q)": ("Quick view (Ctrl+Q)", "快速查看（Ctrl+Q）"),
+    "Быстрый просмотр (вторая панель)": ("Quick view (second panel)", "快速查看（第二面板）"),
+    "В архив перетащить нельзя": ("Cannot drop into an archive", "无法拖放到压缩包中"),
+    "В корзину": ("To trash", "移到回收站"),
+    "В папке назначения уже есть {n} файл(ов) с такими именами:\n{names}\n\nПерезаписать?":
+        ("The destination folder already contains {n} file(s) with these names:\n{names}\n\nOverwrite?",
+         "目标文件夹中已有 {n} 个同名文件：\n{names}\n\n是否覆盖？"),
+    "В файле ошибка JSON ({err}).\nСохранить как есть?":
+        ("JSON error in the file ({err}).\nSave as is?", "文件中存在 JSON 错误（{err}）。\n仍要保存？"),
+    "Все": ("All", "全部"),
+    "Выберите архив (.zip, .tar, .tgz, .tar.bz2, .tar.xz)":
+        ("Select an archive (.zip, .tar, .tgz, .tar.bz2, .tar.xz)",
+         "请选择压缩包（.zip、.tar、.tgz、.tar.bz2、.tar.xz）"),
+    "Выйти из полноэкранного режима": ("Exit full screen", "退出全屏"),
+    "Выход": ("Exit", "退出"),
+    "Где:": ("Where:", "位置："),
+    "Групповое переименование": ("Batch rename", "批量重命名"),
+    "Групповое переименование в архиве не поддерживается":
+        ("Batch rename is not supported in archives", "压缩包内不支持批量重命名"),
+    "Групповое переименование…": ("Batch rename…", "批量重命名…"),
+    "Двоичный DOC перезаписать нельзя — сохранить как":
+        ("Binary DOC cannot be overwritten — save as", "二进制 DOC 无法覆写 — 另存为"),
+    "Двухпанельный файловый менеджер для Linux в духе Total Commander.<br><br>Tab — панели, F5/F6 — копирование/перенос, F3/F4 — просмотр/правка,<br>Alt+F7 — поиск, Ctrl+Q — быстрый просмотр, F8 — корзина.<br><br><span style='color:#5fbab4;'>Айдентика — Iustitia:</span> графит · пергамент · бирюза · бронза.":
+        ("A dual-panel file manager for Linux in the spirit of Total Commander.<br><br>"
+         "Tab — panels, F5/F6 — copy/move, F3/F4 — view/edit,<br>"
+         "Alt+F7 — search, Ctrl+Q — quick view, F8 — trash.<br><br>"
+         "<span style='color:#5fbab4;'>Identity — Iustitia:</span> graphite · parchment · teal · bronze.",
+         "一款致敬 Total Commander 的 Linux 双栏文件管理器。<br><br>"
+         "Tab — 切换面板，F5/F6 — 复制/移动，F3/F4 — 查看/编辑，<br>"
+         "Alt+F7 — 搜索，Ctrl+Q — 快速查看，F8 — 回收站。<br><br>"
+         "<span style='color:#5fbab4;'>视觉识别 — Iustitia：</span>石墨 · 羊皮纸 · 青碧 · 青铜。"),
+    "Дерево": ("Tree", "树"),
+    "Дерево JSON (Ctrl+T)": ("JSON tree (Ctrl+T)", "JSON 树（Ctrl+T）"),
+    "Домой": ("Home", "主目录"),
+    "Есть изменения": ("There are changes", "有更改"),
+    "Закрыть приложение": ("Close application", "关闭应用"),
+    "Заменить": ("Replace", "替换"),
+    "Заменить на": ("Replace with", "替换为"),
+    "Заменить…": ("Replace…", "替换…"),
+    "Заменяемый (назначение)": ("Target (destination)", "被覆盖（目标）"),
+    "Запаковать": ("Pack", "压缩"),
+    "Запаковать…": ("Pack…", "压缩…"),
+    "Запаковка": ("Packing", "正在压缩"),
+    "Запись в архив {name}": ("Writing to archive {name}", "写入压缩包 {name}"),
+    "Значение": ("Value", "值"),
+    "Идёт файловая операция. Прервать её и выйти?":
+        ("A file operation is running. Interrupt it and exit?", "文件操作正在进行。中断并退出？"),
+    "Извлечение в другой архив не поддерживается":
+        ("Extraction into another archive is not supported", "不支持解压到另一个压缩包"),
+    "Извлечение из архива": ("Extract from archive", "从压缩包解压"),
+    "Изменён": ("Modified", "修改时间"),
+    "Имя архива (в {dir}):": ("Archive name (in {dir}):", "压缩包名称（在 {dir} 中）："),
+    "Имя папки:": ("Folder name:", "文件夹名称："),
+    "История — стрелки ↑/↓": ("History — ↑/↓ arrows", "历史记录 — ↑/↓ 方向键"),
+    "Источник": ("Source", "源"),
+    "Исходник": ("Source", "源码"),
+    "Исходник/предпросмотр (Ctrl+Shift+P)":
+        ("Source/preview (Ctrl+Shift+P)", "源码/预览（Ctrl+Shift+P）"),
+    "КАТАЛОГ": ("DIRECTORY", "目录"),
+    "Каталог": ("Directory", "目录"),
+    "Каталог не найден:\n{target}": ("Directory not found:\n{target}", "未找到目录：\n{target}"),
+    "Каталог.\n(Enter — перейти, F3 — открыть файл)":
+        ("Directory.\n(Enter — open, F3 — view file)", "目录。\n（Enter — 进入，F3 — 查看文件）"),
+    "Кодировка": ("Encoding", "编码"),
+    "Командная строка": ("Command line", "命令行"),
+    "Командная строка: Enter — выполнить (cd — сменить каталог панели)":
+        ("Command line: Enter — run (cd — change panel directory)",
+         "命令行：Enter — 执行（cd — 切换面板目录）"),
+    "Копирование": ("Copy", "复制"),
+    "Копирование (перетащено): {n}": ("Copy (dropped): {n}", "复制（拖放）：{n}"),
+    "Копировать полный путь": ("Copy full path", "复制完整路径"),
+    "Корень (/)": ("Root (/)", "根目录 (/)"),
+    "Левая панель: смена диска": ("Left panel: change drive", "左面板：切换驱动器"),
+    "Маска файлов:": ("File mask:", "文件掩码："),
+    "Маски через пробел или ;:  *.py  *.txt;README*":
+        ("Patterns separated by spaces or ;:  *.py  *.txt;README*",
+         "掩码用空格或 ; 分隔：*.py  *.txt;README*"),
+    "Миниатюры картинок": ("Image thumbnails", "图片缩略图"),
+    "Монтирование": ("Mounting", "挂载"),
+    "Найти": ("Find", "查找"),
+    "Начало:": ("Start:", "起始："),
+    "Не удалось извлечь:\n{exc}": ("Failed to extract:\n{exc}", "解压失败：\n{exc}"),
+    "Не удалось открыть файл:\n{exc}": ("Failed to open file:\n{exc}", "无法打开文件：\n{exc}"),
+    "Не удалось открыть:\n{exc}": ("Failed to open:\n{exc}", "无法打开：\n{exc}"),
+    "Не удалось показать:\n{exc}": ("Cannot display:\n{exc}", "无法显示：\n{exc}"),
+    "Не удалось построить план:\n{exc}": ("Failed to build plan:\n{exc}", "无法生成计划：\n{exc}"),
+    "Не удалось сохранить RTF:\n{exc}": ("Failed to save RTF:\n{exc}", "保存 RTF 失败：\n{exc}"),
+    "Не удалось сохранить XLS:\n{exc}": ("Failed to save XLS:\n{exc}", "保存 XLS 失败：\n{exc}"),
+    "Не удалось сохранить docx:\n{exc}": ("Failed to save docx:\n{exc}", "保存 docx 失败：\n{exc}"),
+    "Не удалось сохранить:\n{exc}": ("Failed to save:\n{exc}", "保存失败：\n{exc}"),
+    "Неверный диапазон страниц": ("Invalid page range", "页面范围无效"),
+    "Нет объекта под курсором": ("No item under cursor", "光标处没有项目"),
+    "Нет объектов для обработки": ("Nothing to process", "没有可处理的项目"),
+    "Нет объектов для переименования": ("Nothing to rename", "没有可重命名的项目"),
+    "Нет отмеченных объектов (Insert — отметить)":
+        ("Nothing marked (Insert to mark)", "没有标记的项目（Insert 标记）"),
+    "Нет файла под курсором": ("No file under cursor", "光标处没有文件"),
+    "Новая папка": ("New folder", "新建文件夹"),
+    "Новое имя:": ("New name:", "新名称："),
+    "Номер строки:": ("Line number:", "行号："),
+    "О программе": ("About", "关于"),
+    "Обновить": ("Refresh", "刷新"),
+    "Обработано {done} из {total} объект(ов)":
+        ("Processed {done} of {total} item(s)", "已处理 {total} 项中的 {done} 项"),
+    "Обработано {done} из {total} объект(ов) — {done_size} из {total_size} ({pct}%)":
+        ("Processed {done} of {total} item(s) — {done_size} of {total_size} ({pct}%)",
+         "已处理 {total} 项中的 {done} 项 — {total_size} 中的 {done_size}（{pct}%）"),
+    "Операция": ("Operation", "操作"),
+    "Операция выполняется": ("Operation in progress", "操作正在执行"),
+    "Операция завершена с ошибками: {n}.\nУспешно: {ok}, пропущено: {skipped}.":
+        ("Operation finished with {n} error(s).\nSucceeded: {ok}, skipped: {skipped}.",
+         "操作完成，出现 {n} 个错误。\n成功：{ok}，跳过：{skipped}。"),
+    "Операция прервана.\nУспешно: {ok}, пропущено: {skipped}.":
+        ("Operation cancelled.\nSucceeded: {ok}, skipped: {skipped}.",
+         "操作已中断。\n成功：{ok}，跳过：{skipped}。"),
+    "Открыть системным приложением": ("Open with system application", "用系统应用打开"),
+    "Отмена": ("Cancel", "取消"),
+    "Ошибка": ("Error", "错误"),
+    "Ошибки операции": ("Operation errors", "操作错误"),
+    "Папка": ("Folder", "文件夹"),
+    "Перезаписать все": ("Overwrite all", "全部覆盖"),
+    "Перезапись": ("Overwrite", "覆盖"),
+    "Перезапись файлов": ("Overwrite files", "文件覆盖"),
+    "Переименование": ("Renaming", "重命名"),
+    "Переименование в архиве не поддерживается":
+        ("Rename is not supported in archives", "压缩包内不支持重命名"),
+    "Переименовано: {done}, ошибок: {n}.": ("Renamed: {done}, errors: {n}.", "已重命名：{done}，错误：{n}。"),
+    "Переименовано: {n}": ("Renamed: {n}", "已重命名：{n}"),
+    "Переименовать": ("Rename", "重命名"),
+    "Перейти на строку": ("Go to line", "转到行"),
+    "Переместить в корзину": ("Move to trash", "移到回收站"),
+    "Перенос": ("Move", "移动"),
+    "Перенос из архива": ("Move from archive", "从压缩包移动"),
+    "Перенос строк": ("Word wrap", "自动换行"),
+    "Переносить длинные строки": ("Wrap long lines", "换行显示长行"),
+    "Перетаскивать нечего: объекты уже в этой папке":
+        ("Nothing to move: items are already in this folder", "无需移动：项目已在此文件夹中"),
+    "Переход": ("Go", "转到"),
+    "Подключить {label} [{size}]": ("Mount {label} [{size}]", "挂载 {label} [{size}]"),
+    "Подстановки:  * — имя без расширения,  [E] — расширение,  [N]/[N03] — счётчик (ширина)":
+        ("Placeholders:  * — name without extension,  [E] — extension,  [N]/[N03] — counter (width)",
+         "占位符：* — 不含扩展名的名称，[E] — 扩展名，[N]/[N03] — 计数器（宽度）"),
+    "Поиск (Enter — далее)": ("Search (Enter — next)", "搜索（Enter — 下一个）"),
+    "Поиск в: {dir}": ("Searching in: {dir}", "搜索位置：{dir}"),
+    "Поиск файлов": ("Find files", "查找文件"),
+    "Поиск файлов…": ("Find files…", "查找文件…"),
+    "Полноэкранный режим": ("Full screen", "全屏"),
+    "Поменять панели местами": ("Swap panels", "交换面板"),
+    "Похоже, файл бинарный — встроенный редактор его не открывает.":
+        ("The file looks binary — the built-in editor cannot open it.",
+         "文件似乎是二进制文件 — 内置编辑器无法打开。"),
+    "Правая панель: смена диска": ("Right panel: change drive", "右面板：切换驱动器"),
+    "Правка": ("Edit", "编辑"),
+    "Предпросмотр": ("Preview", "预览"),
+    "Предыдущая команда ещё выполняется": ("Previous command is still running", "上一条命令仍在执行"),
+    "Прервать все": ("Abort all", "全部中止"),
+    "Прервать текущую": ("Cancel current", "取消当前任务"),
+    "Примонтировано: {message}": ("Mounted: {message}", "已挂载：{message}"),
+    "Пропустить все": ("Skip all", "全部跳过"),
+    "Просмотр": ("View", "查看"),
+    "Путь панели скопирован в буфер обмена": ("Panel path copied to clipboard", "面板路径已复制到剪贴板"),
+    "Размер": ("Size", "大小"),
+    "Размонтирование": ("Unmounting", "卸载"),
+    "Размонтировано: {name}": ("Unmounted: {name}", "已卸载：{name}"),
+    "Распаковать…": ("Unpack…", "解压…"),
+    "Распаковка {name}": ("Unpacking {name}", "正在解压 {name}"),
+    "Рег. выражение": ("Regex", "正则表达式"),
+    "Рекурсивно": ("Recursive", "递归"),
+    "Скопировано путей: {n}": ("Copied {n} path(s)", "已复制 {n} 个路径"),
+    "Скрытые файлы": ("Hidden files", "隐藏文件"),
+    "След. (Alt+↓) →": ("Next (Alt+↓) →", "下一个（Alt+↓）→"),
+    "Смена диска": ("Change drive", "切换驱动器"),
+    "Сначала извлеките объекты из архива":
+        ("Extract the items from the archive first", "请先从压缩包中解压项目"),
+    "Совпадение": ("Match", "匹配"),
+    "Создание папок в архиве не поддерживается":
+        ("Creating folders in archives is not supported", "压缩包内不支持创建文件夹"),
+    "Сортировка": ("Sort", "排序"),
+    "Сортировка: дата": ("Sort: date", "排序：日期"),
+    "Сортировка: имя": ("Sort: name", "排序：名称"),
+    "Сортировка: размер": ("Sort: size", "排序：大小"),
+    "Сортировка: расширение": ("Sort: extension", "排序：扩展名"),
+    "Сохранение XLS": ("Saving XLS", "保存 XLS"),
+    "Сохранено страниц: {n}\n{out}": ("Saved {n} page(s)\n{out}", "已保存 {n} 页\n{out}"),
+    "Сравнение каталогов работает для обычных каталогов":
+        ("Directory comparison works for regular directories only", "目录比较仅适用于普通目录"),
+    "Сравнение каталогов: {left} отличий слева, {right} справа (выделено синим)":
+        ("Directory comparison: {left} differences on the left, {right} on the right (shown in blue)",
+         "目录比较：左侧 {left} 处差异，右侧 {right} 处（以蓝色标出）"),
+    "Сравнить каталоги": ("Compare directories", "比较目录"),
+    "Станет": ("New name", "新名"),
+    "Стоп": ("Stop", "停止"),
+    "Стр.": ("Line", "行"),
+    "Страницы (например 1-3,5; всего {total}):":
+        ("Pages (e.g. 1-3,5; total {total}):", "页面（例如 1-3,5；共 {total} 页）："),
+    "Таблица изменена. Сохранить XLS (формулы → значения)?":
+        ("The sheet has been modified. Save XLS (formulas → values)?",
+         "表格已修改。保存 XLS（公式 → 数值）？"),
+    "Текст": ("Text", "文本"),
+    "Текст не сохраняется в {enc} без потерь.\nСохранить как UTF-8?":
+        ("Text cannot be saved in {enc} without loss.\nSave as UTF-8?",
+         "文本无法无损保存为 {enc}。\n是否保存为 UTF-8？"),
+    "Текст:": ("Text:", "文本："),
+    "Удаление (в корзину)": ("Move to trash", "移到回收站"),
+    "Удаление безвозвратно": ("Permanent deletion", "永久删除"),
+    "Удаление из {name}": ("Delete from {name}", "从 {name} 删除"),
+    "Удаление страницы": ("Delete page", "删除页面"),
+    "Удалить": ("Delete", "删除"),
+    "Удалить безвозвратно": ("Delete permanently", "永久删除"),
+    "Удалить навсегда": ("Delete forever", "永久删除"),
+    "Удалить страницу": ("Delete page", "删除页面"),
+    "Удалить страницу {n} из {total}?":
+        ("Delete page {n} of {total}?", "删除第 {n} 页（共 {total} 页）？"),
+    "Узел": ("Node", "节点"),
+    "Учитывать регистр": ("Case sensitive", "区分大小写"),
+    "Файл": ("File", "文件"),
+    "Файл изменён. Сохранить перед закрытием?":
+        ("The file has been modified. Save before closing?", "文件已修改。关闭前保存？"),
+    "Файл назначения уже существует. Заменить его?":
+        ("The destination file already exists. Replace it?", "目标文件已存在。是否替换？"),
+    "Файл существует": ("File exists", "文件已存在"),
+    "Фирменная тёмная тема": ("Brand dark theme", "品牌深色主题"),
+    "Фирменная тёмная тема: ": ("Brand dark theme: ", "品牌深色主题："),
+    "Формат:": ("Format:", "格式："),
+    "Форматировать": ("Format", "格式化"),
+    "Форматировать JSON (Ctrl+Shift+F)": ("Format JSON (Ctrl+Shift+F)", "格式化 JSON（Ctrl+Shift+F）"),
+    "Формулы и стили будут заменены значениями. Продолжить?":
+        ("Formulas and styles will be replaced by values. Continue?",
+         "公式和样式将替换为数值。是否继续？"),
+    "Шаблон:": ("Pattern:", "模板："),
+    "Шаг:": ("Step:", "步长："),
+    "Экспорт": ("Export", "导出"),
+    "Экспорт страниц": ("Export pages", "导出页面"),
+    "Экспорт страниц PDF": ("Export PDF pages", "导出 PDF 页面"),
+    "Экспорт страниц…": ("Export pages…", "导出页面…"),
+    "Язык / Language / 语言": ("Язык / Language / 语言", "Язык / Language / 语言"),
+    "Язык изменится после перезапуска приложения":
+        ("The language will change after the application is restarted",
+         "语言将在应用重启后生效"),
+    "бинарный файл\n(F3 — hex-обзор)": ("binary file\n(F3 — hex view)", "二进制文件\n（F3 — 十六进制查看）"),
+    "бинарный файл (hex-обзор)": ("binary file (hex view)", "二进制文件（十六进制查看）"),
+    "бинарных пропущено: {n}": ("binary skipped: {n}", "跳过二进制文件：{n}"),
+    "в книге нет листов": ("no sheets in the workbook", "工作簿中没有工作表"),
+    "в книге нет текстовых глав": ("no text chapters in the book", "书中没有文本章节"),
+    "в назначении каталог с тем же именем":
+        ("a directory with the same name exists at destination", "目标处存在同名目录"),
+    "в презентации нет слайдов": ("no slides in the presentation", "演示文稿中没有幻灯片"),
+    "в файле нет страниц": ("the file has no pages", "文件没有页面"),
+    "версия {v}": ("version {v}", "版本 {v}"),
+    "включена": ("enabled", "已开启"),
+    "внутренняя ошибка: {exc}": ("internal error: {exc}", "内部错误：{exc}"),
+    "вхождений: {n}": ("hits: {n}", "匹配次数：{n}"),
+    "выключена (системная)": ("disabled (system theme)", "已关闭（系统主题）"),
+    "дерева нет — ошибка: {exc}": ("no tree — error: {exc}", "无树视图 — 错误：{exc}"),
+    "дерево недоступно: {exc}": ("tree unavailable: {exc}", "树视图不可用：{exc}"),
+    "дубликат нового имени: {new!r} ({first!r} и {name!r})":
+        ("duplicate new name: {new!r} ({first!r} and {name!r})",
+         "新名称重复：{new!r}（{first!r} 和 {name!r}）"),
+    "заменено: {n}": ("replaced: {n}", "已替换：{n}"),
+    "изображение {w}×{h}": ("image {w}×{h}", "图像 {w}×{h}"),
+    "каталог для левой (и правой) панели":
+        ("directory for the left (and right) panel", "左（及右）面板的目录"),
+    "кодировка: {enc}": ("encoding: {enc}", "编码：{enc}"),
+    "крупных пропущено: {n}": ("large skipped: {n}", "跳过大文件：{n}"),
+    "массив · {n}": ("array · {n}", "数组 · {n}"),
+    "не найдено: {needle}": ("not found: {needle}", "未找到：{needle}"),
+    "не отформатировано — ошибка (строка {line}, столбец {col}): {msg}":
+        ("not formatted — error (line {line}, column {col}): {msg}",
+         "未格式化 — 错误（第 {line} 行，第 {col} 列）：{msg}"),
+    "не отформатировано: {exc}": ("not formatted: {exc}", "未格式化：{exc}"),
+    "не удалось открыть ({kind}):\n{exc}": ("failed to open ({kind}):\n{exc}", "无法打开（{kind}）：\n{exc}"),
+    "не удалось переместить в корзину": ("failed to move to trash", "无法移到回收站"),
+    "не удалось прочитать каталог: {error}": ("failed to read directory: {error}", "读取目录失败：{error}"),
+    "не удалось прочитать файл: {exc}": ("failed to read file: {exc}", "读取文件失败：{exc}"),
+    "объект · {n}": ("object · {n}", "对象 · {n}"),
+    "операций в очереди: {n}": ("operations queued: {n}", "队列中的任务：{n}"),
+    "ошибка монтирования": ("mount error", "挂载错误"),
+    "ошибка открытия": ("open error", "打开错误"),
+    "ошибка размонтирования": ("unmount error", "卸载错误"),
+    "ошибка чтения: {err}": ("read error: {err}", "读取错误：{err}"),
+    "просмотрено файлов: {n}": ("files scanned: {n}", "已扫描文件：{n}"),
+    "пусто — искать только по маске": ("empty — search by mask only", "留空 — 仅按掩码搜索"),
+    "пустой шаблон": ("empty template", "模板为空"),
+    "размонтировано": ("unmounted", "已卸载"),
+    "слайд {n} из {total}": ("slide {n} of {total}", "第 {n} 张，共 {total} 张"),
+    "совпало файлов: {n}": ("files matched: {n}", "匹配文件：{n}"),
+    "сохранено (RTF)": ("saved (RTF)", "已保存（RTF）"),
+    "сохранено (XLS, значения)": ("saved (XLS, values)", "已保存（XLS，数值）"),
+    "сохранено (docx)": ("saved (docx)", "已保存（docx）"),
+    "сохранено ({enc})": ("saved ({enc})", "已保存（{enc}）"),
+    "сохранено: {name}": ("saved: {name}", "已保存：{name}"),
+    "стр. {n} из {total}": ("p. {n} of {total}", "第 {n} 页，共 {total} 页"),
+    "строк: {n}": ("rows: {n}", "行数：{n}"),
+    "строка {line}, столбец {col}": ("line {line}, column {col}", "第 {line} 行，第 {col} 列"),
+    "строка {line}, столбец {col}: {msg}":
+        ("line {line}, column {col}: {msg}", "第 {line} 行，第 {col} 列：{msg}"),
+    "утилита gio не найдена — корзина недоступна":
+        ("gio utility not found — trash is unavailable", "未找到 gio 工具 — 回收站不可用"),
+    "чтение {title}…": ("loading {title}…", "正在读取 {title}…"),
+    "← Пред. (Alt+↑)": ("← Prev (Alt+↑)", "← 上一个（Alt+↑）"),
+    "⏏ {label} ({mountpoint}) — размонтировать":
+        ("⏏ {label} ({mountpoint}) — unmount", "⏏ {label}（{mountpoint}）— 卸载"),
+    "⏳ чтение каталога…": ("⏳ reading directory…", "⏳ 正在读取目录…"),
+    "Не удалось создать папку:\n{err}": ("Failed to create folder:\n{err}", "无法创建文件夹：\n{err}"),
+    "Не удалось переименовать:\n{err}": ("Failed to rename:\n{err}", "重命名失败：\n{err}"),
+    "Поиск файлов": ("Find files", "查找文件"),
+    "файлов: {files}   папок: {dirs}   {size}":
+        ("files: {files}   folders: {dirs}   {size}", "文件：{files}   文件夹：{dirs}   {size}"),
+    "   •   {name}: {size} • {dirs} • {files}":
+        ("   •   {name}: {size} • {dirs} • {files}", "   •   {name}：{size} • {dirs} • {files}"),
+    "<КАТ>": ("<DIR>", "<目录>"),
+    "Имя": ("Name", "名称"),
+    "Расш.": ("Ext", "扩展名"),
+    "Размер": ("Size", "大小"),
+    "Изменён": ("Modified", "修改时间"),
+    "Права": ("Perms", "权限"),
+}
+
+
+_STRINGS = {key: {"en": en, "zh": zh} for key, (en, zh) in _T.items()}
+
+# ключи, передаваемые в tr() не константой (индексированные таблицы и т.п.);
+# тест полноты не считает их «мёртвыми»
+DYNAMIC_KEYS = frozenset({"Имя", "Расш.", "Размер", "Изменён", "Права", "<КАТ>"})
+
+
+def tr(s: str) -> str:
+    """Перевод строки-ключа; без перевода — ключ (по-русски)."""
+    if LANG == "ru":
+        return s
+    return _STRINGS.get(s, {}).get(LANG, s)
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """Русские формы: 1 файл / 2 файла / 5 файлов."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} {one}"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} {few}"
+    return f"{n} {many}"
+
+
+def unit(n: int, ru: tuple[str, str, str], en: tuple[str, str], zh: str) -> str:
+    """Число + единица на текущем языке: «5 файлов» / «5 files» / «5 个文件»."""
+    if LANG == "ru":
+        return plural(n, *ru)
+    if LANG == "en":
+        return f"{n} {en[0] if n == 1 else en[1]}"
+    return f"{n} {zh}"
+
+
+def all_keys() -> list[str]:
+    """Все ключи словаря (для теста полноты)."""
+    return sorted(_STRINGS)

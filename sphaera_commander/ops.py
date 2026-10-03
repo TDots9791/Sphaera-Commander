@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from .i18n import tr
+
 import os
 import shutil
 import stat
@@ -311,7 +313,7 @@ def execute_copy_move(plan: Plan, move: bool, policy: str,
                         continue
                     if os.path.isdir(job.dst) and not os.path.islink(job.dst):
                         result.errors.append(FileError(
-                            job.dst, "в назначении каталог с тем же именем"))
+                            job.dst, tr("в назначении каталог с тем же именем")))
                         continue
                     os.unlink(job.dst)
                 os.rename(job.src, job.dst)
@@ -347,7 +349,7 @@ def execute_copy_move(plan: Plan, move: bool, policy: str,
                     continue
                 if os.path.isdir(job.dst) and not os.path.islink(job.dst):
                     result.errors.append(FileError(
-                        job.dst, "в назначении каталог с тем же именем"))
+                        job.dst, tr("в назначении каталог с тем же именем")))
                     continue
                 os.unlink(job.dst)
             elif job.is_link:
@@ -478,7 +480,7 @@ def execute_trash(sources: list, progress_cb: Callable[[Progress], None],
     result = OpResult()
     gio = shutil.which("gio")
     if gio is None:
-        result.errors.append(FileError("", "утилита gio не найдена — корзина недоступна"))
+        result.errors.append(FileError("", tr("утилита gio не найдена — корзина недоступна")))
         return result
     items = [e for e in sources
              if e.name != ".." and e.path and "::" not in e.path]
@@ -496,7 +498,7 @@ def execute_trash(sources: list, progress_cb: Callable[[Progress], None],
         if proc.returncode == 0:
             result.done_files += 1
         else:
-            message = (proc.stderr or "").strip() or "не удалось переместить в корзину"
+            message = (proc.stderr or "").strip() or tr("не удалось переместить в корзину")
             result.errors.append(FileError(entry.path, message))
         state.done_files = result.done_files
         progress_cb(state)
@@ -526,7 +528,7 @@ class OpWorker(QObject):
         try:
             result = self._spec["fn"](self.progressChanged.emit, self._cancel.is_set)
         except Exception as exc:  # защитная сетка: поток не должен падать молча
-            result = OpResult(errors=[FileError("", f"внутренняя ошибка: {exc}")])
+            result = OpResult(errors=[FileError("", tr("внутренняя ошибка: {exc}").format(exc=exc))])
         self.finished.emit(result)
 
 

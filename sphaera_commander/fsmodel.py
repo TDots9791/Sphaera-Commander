@@ -12,6 +12,7 @@ from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import QApplication, QStyle
 
 from . import thumbnails
+from .i18n import plural, tr  # plural — реэкспорт (формы числительных)
 
 NAME_COL, EXT_COL, SIZE_COL, MTIME_COL, MODE_COL = range(5)
 COLUMNS = ("Имя", "Расш.", "Размер", "Изменён", "Права")
@@ -99,15 +100,6 @@ def human_size(n: int) -> str:
         if n < 1024:
             return f"{n:,.1f}".replace(",", " ").removesuffix(".0") + " " + unit
     return f"{n:,.0f}".replace(",", " ") + " ПиБ"
-
-
-def plural(n: int, one: str, few: str, many: str) -> str:
-    """Русские формы: 1 файл / 2 файла / 5 файлов."""
-    if n % 10 == 1 and n % 100 != 11:
-        return f"{n} {one}"
-    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
-        return f"{n} {few}"
-    return f"{n} {many}"
 
 
 def dir_stats(path: str) -> DirStats:
@@ -336,7 +328,7 @@ class FileTableModel(QAbstractTableModel):
             if col == EXT_COL:
                 return ext_of(e)
             if col == SIZE_COL:
-                return DIR_SIZE_TEXT if e.is_dir else human_size(e.size)
+                return tr(DIR_SIZE_TEXT) if e.is_dir else human_size(e.size)
             if col == MTIME_COL:
                 return time.strftime("%d.%m.%Y %H:%M", time.localtime(e.mtime))
             if col == MODE_COL:
@@ -387,7 +379,7 @@ class FileTableModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:
-            title = COLUMNS[section]
+            title = tr(COLUMNS[section])
             if section == self.sort_col:
                 title += " ↓" if self.sort_desc else " ↑"
             return title

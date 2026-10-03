@@ -13,7 +13,7 @@ import threading
 import zipfile
 
 from PySide6.QtCore import QObject, QProcess, QStorageInfo, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -30,7 +30,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from . import __version__, config
+from . import __version__, config, i18n
+from .i18n import tr
 from . import mounts
 from .archives import ArchiveBrowser, archive_format, pack_items, unpack_archive
 from .dialogs import (
@@ -103,8 +104,8 @@ class CommandLine(QLineEdit):
         super().__init__(parent)
         self.history = history
         self._pos = len(history)
-        self.setPlaceholderText("Командная строка: Enter — выполнить (cd — сменить каталог панели)")
-        self.setToolTip("История — стрелки ↑/↓")
+        self.setPlaceholderText(tr("Командная строка: Enter — выполнить (cd — сменить каталог панели)"))
+        self.setToolTip(tr("История — стрелки ↑/↓"))
 
     def remember(self, cmd: str) -> None:
         if cmd in self.history:
@@ -142,8 +143,8 @@ def select_base_name(line_edit: QLineEdit, name: str, is_dir: bool) -> None:
 
 def make_rename_dialog(parent, entry) -> QInputDialog:
     dlg = QInputDialog(parent)
-    dlg.setWindowTitle("Переименовать")
-    dlg.setLabelText("Новое имя:")
+    dlg.setWindowTitle(tr("Переименовать"))
+    dlg.setLabelText(tr("Новое имя:"))
     dlg.setTextValue(entry.name)
     edit = dlg.findChild(QLineEdit)
     if edit is not None:
@@ -194,13 +195,13 @@ class MainWindow(QMainWindow):
         fn_layout.setContentsMargins(2, 1, 2, 1)
         fn_layout.setSpacing(2)
         for key, title, slot in (
-            ("F3", "Просмотр", self.open_viewer_cmd),
-            ("F4", "Правка", self.open_editor_cmd),
-            ("F5", "Копирование", self.do_copy),
-            ("F6", "Перенос", self.do_move),
-            ("F7", "Папка", self.do_mkdir),
-            ("F8", "В корзину", self.do_delete),
-            ("F10", "Выход", self.close),
+            ("F3", tr("Просмотр"), self.open_viewer_cmd),
+            ("F4", tr("Правка"), self.open_editor_cmd),
+            ("F5", tr("Копирование"), self.do_copy),
+            ("F6", tr("Перенос"), self.do_move),
+            ("F7", tr("Папка"), self.do_mkdir),
+            ("F8", tr("В корзину"), self.do_delete),
+            ("F10", tr("Выход"), self.close),
         ):
             btn = QPushButton(f" {key} {title} ")
             btn.setFlat(True)
@@ -230,6 +231,8 @@ class MainWindow(QMainWindow):
         self._make_corner_close()
         self._restore_panels()
         self._set_active(self.left)
+        # фокус — панели, а не строке адреса: клавиши работают сразу
+        self.left.view.setFocus()
         self.left.view.installEventFilter(self)
         self.right.view.installEventFilter(self)
         self.left.view.context_requested.connect(
@@ -264,85 +267,95 @@ class MainWindow(QMainWindow):
             self.addAction(a)
             return a
 
-        act("Просмотр", "F3", self.open_viewer_cmd)
-        act("Правка", "F4", self.open_editor_cmd)
-        self.act_copy = act("Копирование", "F5", self.do_copy)
-        self.act_move = act("Перенос", "F6", self.do_move)
-        act("Новая папка", "F7", self.do_mkdir)
-        self.act_delete = act("Удаление (в корзину)", "F8", self.do_delete)
-        act("Удалить безвозвратно", "Shift+F8", self.do_delete_permanent)
-        act("Переименовать", "Shift+F6", self.do_rename)
-        act("Групповое переименование…", "Ctrl+M", self.do_batch_rename)
-        act("Поиск файлов…", "Alt+F7", self.do_search)
-        act("Запаковать…", "Alt+F5", self.do_pack)
-        act("Распаковать…", "Alt+F6", self.do_unpack)
-        act("Сравнить каталоги", "Shift+F2", self.compare_dirs)
-        act("Открыть системным приложением", "Ctrl+E", self.open_system)
-        act("Обновить", "Ctrl+R", self.refresh_all)
-        self.act_thumbs = act("Миниатюры картинок", None,
+        act(tr("Просмотр"), "F3", self.open_viewer_cmd)
+        act(tr("Правка"), "F4", self.open_editor_cmd)
+        self.act_copy = act(tr("Копирование"), "F5", self.do_copy)
+        self.act_move = act(tr("Перенос"), "F6", self.do_move)
+        act(tr("Новая папка"), "F7", self.do_mkdir)
+        self.act_delete = act(tr("Удаление (в корзину)"), "F8", self.do_delete)
+        act(tr("Удалить безвозвратно"), "Shift+F8", self.do_delete_permanent)
+        act(tr("Переименовать"), "Shift+F6", self.do_rename)
+        act(tr("Групповое переименование…"), "Ctrl+M", self.do_batch_rename)
+        act(tr("Поиск файлов…"), "Alt+F7", self.do_search)
+        act(tr("Запаковать…"), "Alt+F5", self.do_pack)
+        act(tr("Распаковать…"), "Alt+F6", self.do_unpack)
+        act(tr("Сравнить каталоги"), "Shift+F2", self.compare_dirs)
+        act(tr("Открыть системным приложением"), "Ctrl+E", self.open_system)
+        act(tr("Обновить"), "Ctrl+R", self.refresh_all)
+        self.act_thumbs = act(tr("Миниатюры картинок"), None,
                               lambda: self.toggle_thumbnails(), checkable=True)
         self.act_thumbs.setChecked(config.qsettings().value(
             "view/thumbnails", "false") in (True, "true", "1"))
-        self.act_brand = act("Фирменная тёмная тема", None,
+        self.act_brand = act(tr("Фирменная тёмная тема"), None,
                              lambda: self.toggle_brand_theme(), checkable=True)
         self.act_brand.setChecked(config.qsettings().value(
             "view/brand_theme", "true") in (True, "true", "1"))
-        self.act_hidden = act("Скрытые файлы", "Ctrl+H",
+        self.act_hidden = act(tr("Скрытые файлы"), "Ctrl+H",
                               lambda: self.toggle_hidden(), checkable=True)
         self.act_hidden.setChecked(self.show_hidden)
-        act("Поменять панели местами", "Ctrl+U", self.swap_panels)
-        self.act_quick = act("Быстрый просмотр (вторая панель)", "Ctrl+Q",
+        act(tr("Поменять панели местами"), "Ctrl+U", self.swap_panels)
+        self.act_quick = act(tr("Быстрый просмотр (вторая панель)"), "Ctrl+Q",
                              self.toggle_quick_view, checkable=True)
         self.act_quick.setChecked(self.quick_view)
-        self.act_fullscreen = act("Полноэкранный режим", "F11",
+        self.act_fullscreen = act(tr("Полноэкранный режим"), "F11",
                                   self.toggle_fullscreen, checkable=True)
-        act("Выйти из полноэкранного режима", "Escape", self._exit_fullscreen)
-        act("Выход", "F10", self.close)
-        act("Сортировка: имя", "Ctrl+F3", lambda: self._sort_active(NAME_COL))
-        act("Сортировка: расширение", "Ctrl+F4",
+        act(tr("Выйти из полноэкранного режима"), "Escape", self._exit_fullscreen)
+        act(tr("Выход"), "F10", self.close)
+        act(tr("Сортировка: имя"), "Ctrl+F3", lambda: self._sort_active(NAME_COL))
+        act(tr("Сортировка: расширение"), "Ctrl+F4",
             lambda: self._sort_active(EXT_COL))
-        act("Сортировка: дата", "Ctrl+F5", lambda: self._sort_active(MTIME_COL))
-        act("Сортировка: размер", "Ctrl+F6", lambda: self._sort_active(SIZE_COL))
-        self.act_alt_f1 = act("Левая панель: смена диска", "Alt+F1",
+        act(tr("Сортировка: дата"), "Ctrl+F5", lambda: self._sort_active(MTIME_COL))
+        act(tr("Сортировка: размер"), "Ctrl+F6", lambda: self._sort_active(SIZE_COL))
+        self.act_alt_f1 = act(tr("Левая панель: смена диска"), "Alt+F1",
                               lambda: self._places_menu(self.left))
-        self.act_alt_f2 = act("Правая панель: смена диска", "Alt+F2",
+        self.act_alt_f2 = act(tr("Правая панель: смена диска"), "Alt+F2",
                               lambda: self._places_menu(self.right))
 
     def _make_menu(self):
-        m_file = self.menuBar().addMenu("&Файл")
-        for title in ("Просмотр", "Правка", "Открыть системным приложением"):
+        m_file = self.menuBar().addMenu(tr("&Файл"))
+        for title in (tr("Просмотр"), tr("Правка"), tr("Открыть системным приложением")):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
-        for title in ("Копирование", "Перенос", "Новая папка", "Удаление (в корзину)",
-                      "Удалить безвозвратно", "Переименовать",
-                      "Групповое переименование…", "Поиск файлов…"):
+        for title in (tr("Копирование"), tr("Перенос"), tr("Новая папка"), tr("Удаление (в корзину)"),
+                      tr("Удалить безвозвратно"), tr("Переименовать"),
+                      tr("Групповое переименование…"), tr("Поиск файлов…")):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
-        for title in ("Запаковать…", "Распаковать…"):
+        for title in (tr("Запаковать…"), tr("Распаковать…")):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
-        m_file.addAction(self._find_action("Выход"))
+        m_file.addAction(self._find_action(tr("Выход")))
 
-        m_view = self.menuBar().addMenu("&Вид")
+        m_view = self.menuBar().addMenu(tr("&Вид"))
         m_view.addAction(self.act_hidden)
         m_view.addAction(self.act_quick)
         m_view.addAction(self.act_thumbs)
         m_view.addAction(self.act_brand)
-        m_view.addAction(self._find_action("Обновить"))
+        m_view.addAction(self._find_action(tr("Обновить")))
         m_view.addAction(self.act_fullscreen)
-        m_sort = m_view.addMenu("Сортировка")
-        for t in ("имя", "расширение", "дата", "размер"):
-            m_sort.addAction(self._find_action(f"Сортировка: {t}"))
+        m_sort = m_view.addMenu(tr("Сортировка"))
+        for key in (tr("Сортировка: имя"), tr("Сортировка: расширение"),
+                    tr("Сортировка: дата"), tr("Сортировка: размер")):
+            m_sort.addAction(self._find_action(tr(key)))
+        m_lang = m_view.addMenu(tr("Язык / Language / 语言"))
+        lang_group = QActionGroup(m_lang)
+        for code, label in i18n.LANGUAGES:
+            a = QAction(label, m_lang)
+            a.setCheckable(True)
+            a.setChecked(i18n.LANG == code)
+            lang_group.addAction(a)
+            a.triggered.connect(lambda _=False, c=code: self._set_language(c))
+            m_lang.addAction(a)
 
-        m_panels = self.menuBar().addMenu("&Панели")
+        m_panels = self.menuBar().addMenu(tr("&Панели"))
         m_panels.addAction(self.act_alt_f1)
         m_panels.addAction(self.act_alt_f2)
-        m_panels.addAction(self._find_action("Поменять панели местами"))
+        m_panels.addAction(self._find_action(tr("Поменять панели местами")))
         m_panels.addSeparator()
-        m_panels.addAction(self._find_action("Сравнить каталоги"))
+        m_panels.addAction(self._find_action(tr("Сравнить каталоги")))
 
-        m_help = self.menuBar().addMenu("&Справка")
-        about = QAction("О программе", self)
+        m_help = self.menuBar().addMenu(tr("&Справка"))
+        about = QAction(tr("О программе"), self)
         about.triggered.connect(self._about)
         m_help.addAction(about)
 
@@ -353,11 +366,15 @@ class MainWindow(QMainWindow):
 
         self._corner_close = QToolButton(self.menuBar())
         self._corner_close.setText("✕")
-        self._corner_close.setToolTip("Закрыть приложение")
+        self._corner_close.setToolTip(tr("Закрыть приложение"))
         self._corner_close.setAutoRaise(True)
         self._corner_close.clicked.connect(self.close)
         self._corner_close.hide()  # виден только в полноэкранном режиме
         self.menuBar().setCornerWidget(self._corner_close, Qt.TopRightCorner)
+
+    def _set_language(self, code: str) -> None:
+        config.qsettings().setValue("view/language", code)
+        self._status(tr("Язык изменится после перезапуска приложения"))
 
     def _find_action(self, title: str) -> QAction:
         for a in self.findChildren(QAction):
@@ -386,8 +403,8 @@ class MainWindow(QMainWindow):
             theme.apply_brand_theme(app)
         else:
             theme.revert_theme(app)
-        self._status("Фирменная тёмная тема: "
-                     + ("включена" if on else "выключена (системная)"))
+        self._status(tr("Фирменная тёмная тема: ")
+                     + (tr("включена") if on else tr("выключена (системная)")))
 
     def toggle_thumbnails(self):
         on = self.act_thumbs.isChecked()
@@ -505,9 +522,9 @@ class MainWindow(QMainWindow):
         self.active.view.scrollToTop()
 
     def _places_menu(self, panel: FilePanel):
-        menu = QMenu("Смена диска", self)
-        menu.addAction("Домой", lambda: panel.cd(os.path.expanduser("~")))
-        menu.addAction("Корень (/)", lambda: panel.cd("/"))
+        menu = QMenu(tr("Смена диска"), self)
+        menu.addAction(tr("Домой"), lambda: panel.cd(os.path.expanduser("~")))
+        menu.addAction(tr("Корень (/)"), lambda: panel.cd("/"))
         menu.addSeparator()
         seen = set()
         for vol in QStorageInfo.mountedVolumes():
@@ -527,21 +544,23 @@ class MainWindow(QMainWindow):
                     if dev["mountpoint"] == "/":
                         continue  # корень не размонтируем
                     menu.addAction(
-                        f"⏏ {label} ({dev['mountpoint']}) — размонтировать",
+                        tr("⏏ {label} ({mountpoint}) — размонтировать").format(
+                            label=label, mountpoint=dev["mountpoint"]),
                         lambda d=dev: self._unmount_device(d, panel))
                 else:
                     menu.addAction(
-                        f"Подключить {label} [{dev['size']}]",
+                        tr("Подключить {label} [{size}]").format(
+                            label=label, size=dev["size"]),
                         lambda d=dev: self._mount_device(d, panel))
         menu.exec(self.cursor().pos())
 
     def _mount_device(self, dev: dict, panel: FilePanel) -> None:
         ok, message = mounts.mount(dev["path"])
         if not ok:
-            QMessageBox.warning(self, "Монтирование",
-                                f"{dev['path']}:\n{message}")
+            QMessageBox.warning(self, tr("Монтирование"),
+                                tr("{path}:\n{message}").format(path=dev["path"], message=message))
             return
-        self._status(f"Примонтировано: {message}")
+        self._status(tr("Примонтировано: {message}").format(message=message))
         if os.path.isdir(message):
             panel.cd(message)
         panel.refresh()
@@ -549,10 +568,10 @@ class MainWindow(QMainWindow):
     def _unmount_device(self, dev: dict, panel: FilePanel) -> None:
         ok, message = mounts.unmount(dev["path"])
         if not ok:
-            QMessageBox.warning(self, "Размонтирование",
-                                f"{dev['path']}:\n{message}")
+            QMessageBox.warning(self, tr("Размонтирование"),
+                                tr("{path}:\n{message}").format(path=dev["path"], message=message))
             return
-        self._status(f"Размонтировано: {dev['name']}")
+        self._status(tr("Размонтировано: {name}").format(name=dev["name"]))
         for p in (self.left, self.right):
             if p.current_path().startswith(dev["mountpoint"]):
                 p.up()
@@ -565,7 +584,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtGui import QPixmap
 
         box = QMessageBox(self)
-        box.setWindowTitle("О программе")
+        box.setWindowTitle(tr("О программе"))
         logo = Path(__file__).parent / "assets" / "logo.png"
         if logo.exists():
             pixmap = QPixmap(str(logo)).scaled(
@@ -574,13 +593,14 @@ class MainWindow(QMainWindow):
         box.setText(
             "<span style=\"font-family:'PT Serif', Georgia, serif; "
             "font-size:15pt;\">Sphaera Commander</span><br>"
-            f"<span style='color:#c6baa6;'>версия {__version__}</span>")
+            "<span style='color:#c6baa6;'>"
+            + tr("версия {v}").format(v=__version__) + "</span>")
         box.setInformativeText(
-            "Двухпанельный файловый менеджер для Linux в духе Total Commander.<br><br>"
-            "Tab — панели, F5/F6 — копирование/перенос, F3/F4 — просмотр/правка,<br>"
-            "Alt+F7 — поиск, Ctrl+Q — быстрый просмотр, F8 — корзина.<br><br>"
-            "<span style='color:#5fbab4;'>Айдентика — Iustitia:</span> "
-            "графит · пергамент · бирюза · бронза.")
+            tr("Двухпанельный файловый менеджер для Linux в духе Total Commander.<br><br>"
+               "Tab — панели, F5/F6 — копирование/перенос, F3/F4 — просмотр/правка,<br>"
+               "Alt+F7 — поиск, Ctrl+Q — быстрый просмотр, F8 — корзина.<br><br>"
+               "<span style='color:#5fbab4;'>Айдентика — Iustitia:</span> "
+               "графит · пергамент · бирюза · бронза."))
         box.exec()
 
     def _context_menu(self, panel: FilePanel, pos) -> None:
@@ -588,17 +608,17 @@ class MainWindow(QMainWindow):
         entry = panel.current_entry()
         menu = QMenu(self)
         if entry is not None and not entry.is_dir:
-            menu.addAction(self._find_action("Просмотр"))
-            menu.addAction(self._find_action("Правка"))
+            menu.addAction(self._find_action(tr("Просмотр")))
+            menu.addAction(self._find_action(tr("Правка")))
             menu.addSeparator()
         if entry is not None and archive_format(entry.path):
-            menu.addAction(self._find_action("Распаковать…"))
-        for title in ("Копирование", "Перенос", "Удаление (в корзину)",
-                      "Переименовать"):
+            menu.addAction(self._find_action(tr("Распаковать…")))
+        for title in (tr("Копирование"), tr("Перенос"), tr("Удаление (в корзину)"),
+                      tr("Переименовать")):
             menu.addAction(self._find_action(title))
         menu.addSeparator()
-        menu.addAction(self._find_action("Открыть системным приложением"))
-        menu.addAction("Копировать полный путь",
+        menu.addAction(self._find_action(tr("Открыть системным приложением")))
+        menu.addAction(tr("Копировать полный путь"),
                        lambda: self._copy_paths(panel))
         menu.exec(panel.view.viewport().mapToGlobal(pos))
 
@@ -607,10 +627,10 @@ class MainWindow(QMainWindow):
         entries = panel.selected_entries()
         if entries:
             text = "\n".join(e.path for e in entries)
-            self._status(f"Скопировано путей: {len(entries)}")
+            self._status(tr("Скопировано путей: {n}").format(n=len(entries)))
         else:
             text = panel.current_path()
-            self._status("Путь панели скопирован в буфер обмена")
+            self._status(tr("Путь панели скопирован в буфер обмена"))
         QApplication.clipboard().setText(text)
 
     # ------------------------------------------------------------- просмотр/правка
@@ -631,7 +651,7 @@ class MainWindow(QMainWindow):
                 tmp = browser.extract_member_to_temp(member, self._ensure_temp())
             except (ValueError, OSError, KeyError,
                     zipfile.BadZipFile, tarfile.TarError) as exc:
-                QMessageBox.warning(self, "Архив", f"Не удалось извлечь:\n{exc}")
+                QMessageBox.warning(self, tr("Архив"), tr("Не удалось извлечь:\n{exc}").format(exc=exc))
                 return
             QDesktopServices.openUrl(QUrl.fromLocalFile(tmp))
             return
@@ -649,7 +669,7 @@ class MainWindow(QMainWindow):
                 tmp = browser.extract_member_to_temp(member, self._ensure_temp())
             except (ValueError, OSError, KeyError,
                     zipfile.BadZipFile, tarfile.TarError) as exc:
-                QMessageBox.warning(self, "Архив", f"Не удалось извлечь:\n{exc}")
+                QMessageBox.warning(self, tr("Архив"), tr("Не удалось извлечь:\n{exc}").format(exc=exc))
                 return None, [], None, ""
             return tmp, [tmp], browser, member
         files = [e.path for e in self.active.model.entries if not e.is_dir]
@@ -658,14 +678,14 @@ class MainWindow(QMainWindow):
     def open_viewer_cmd(self):
         path, files, _browser, _member = self._viewer_targets()
         if path is None:
-            self._status("Нет файла под курсором")
+            self._status(tr("Нет файла под курсором"))
             return
         open_viewer(self, path, files, editable=False).exec()
 
     def open_editor_cmd(self):
         path, files, browser, member = self._viewer_targets()
         if path is None:
-            self._status("Нет файла под курсором")
+            self._status(tr("Нет файла под курсором"))
             return
         doc_kind = pv.document_kind(path)
         if doc_kind is not None:
@@ -681,18 +701,19 @@ class MainWindow(QMainWindow):
                 with open(path, "rb") as f:
                     head = f.read(8192)
             except OSError as exc:
-                QMessageBox.warning(self, "Правка", f"Не удалось открыть файл:\n{exc}")
+                QMessageBox.warning(self, tr("Правка"), tr("Не удалось открыть файл:\n{exc}").format(exc=exc))
                 return
             if looks_binary(head):
                 QMessageBox.information(
-                    self, "Правка",
-                    "Похоже, файл бинарный — встроенный редактор его не открывает.")
+                    self, tr("Правка"),
+                    tr("Похоже, файл бинарный — встроенный редактор его не открывает."))
                 return
         dlg = open_viewer(self, path, files, editable=True)
         dlg.exec()
         if browser is not None and dlg.saved_on_close:
             self._enqueue_op(
-                f"Запись в архив {os.path.basename(browser.archive_path)}",
+                tr("Запись в архив {name}").format(
+                    name=os.path.basename(browser.archive_path)),
                 lambda progress_cb, is_cancelled:
                 browser.replace_member(member, path),
                 after=self.refresh_all)
@@ -780,11 +801,11 @@ class MainWindow(QMainWindow):
             self._extract_selected(move=move)
             return
         if self._other().is_vfs:
-            self._status("Архив в панели назначения открыт только для чтения")
+            self._status(tr("Архив в панели назначения открыт только для чтения"))
             return
         sources = self.active.selected_entries()
         if not sources:
-            self._status("Нет отмеченных объектов (Insert — отметить)")
+            self._status(tr("Нет отмеченных объектов (Insert — отметить)"))
             return
         dest = self._other().current_path()
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -792,14 +813,14 @@ class MainWindow(QMainWindow):
             plan = plan_copy_move(sources, dest, move)
         except OSError as exc:
             QApplication.restoreOverrideCursor()
-            QMessageBox.critical(self, "Ошибка", f"Не удалось построить план:\n{exc}")
+            QMessageBox.critical(self, tr("Ошибка"), tr("Не удалось построить план:\n{exc}").format(exc=exc))
             return
         QApplication.restoreOverrideCursor()
         if not plan.jobs:
-            self._status("Нет объектов для обработки")
+            self._status(tr("Нет объектов для обработки"))
             return
         kind = KIND_MOVE if move else KIND_COPY
-        title = "Перенос" if move else "Копирование"
+        title = tr("Перенос") if move else tr("Копирование")
         self._enqueue_op(title, self._fs_fn(kind, plan, sources),
                          after=lambda m=move: self._after_copy_move(m))
 
@@ -811,7 +832,7 @@ class MainWindow(QMainWindow):
     def _on_drop(self, paths: list[str], target: str, panel: FilePanel) -> None:
         """Файлы перетащили в панель (из другого приложения или между панелями)."""
         if "::" in target:
-            self._status("В архив перетащить нельзя")
+            self._status(tr("В архив перетащить нельзя"))
             return
         entries = []
         for p in paths:
@@ -821,12 +842,12 @@ class MainWindow(QMainWindow):
             if entry is not None:
                 entries.append(entry)
         if not entries:
-            self._status("Перетаскивать нечего: объекты уже в этой папке")
+            self._status(tr("Перетаскивать нечего: объекты уже в этой папке"))
             return
         try:
             plan = plan_copy_move(entries, target, move=False)
         except OSError as exc:
-            QMessageBox.critical(self, "Ошибка", f"Не удалось построить план:\n{exc}")
+            QMessageBox.critical(self, tr("Ошибка"), tr("Не удалось построить план:\n{exc}").format(exc=exc))
             return
         policy = POLICY_OVERWRITE
         if plan.conflicts:
@@ -842,7 +863,7 @@ class MainWindow(QMainWindow):
             self.refresh_all()
             p.refresh()
 
-        self._enqueue_op(f"Копирование (перетащено): {len(entries)}", fn, after=after)
+        self._enqueue_op(tr("Копирование (перетащено): {n}").format(n=len(entries)), fn, after=after)
 
     def _extract_selected(self, move: bool) -> None:
         """Извлечение выбранных членов архива в противоположную панель (F5/F6)."""
@@ -850,14 +871,14 @@ class MainWindow(QMainWindow):
         browser = panel.vfs
         sources = panel.selected_entries()
         if not sources or browser is None:
-            self._status("Нет отмеченных объектов (Insert — отметить)")
+            self._status(tr("Нет отмеченных объектов (Insert — отметить)"))
             return
         if self._other().is_vfs:
-            self._status("Извлечение в другой архив не поддерживается")
+            self._status(tr("Извлечение в другой архив не поддерживается"))
             return
         members = [e.path.partition("::")[2] for e in sources]
         dest = self._other().current_path()
-        title = "Перенос из архива" if move else "Извлечение из архива"
+        title = tr("Перенос из архива") if move else tr("Извлечение из архива")
         extract_fn = (lambda progress_cb, is_cancelled:
                       browser.extract_members(members, dest, progress_cb,
                                               is_cancelled,
@@ -865,7 +886,8 @@ class MainWindow(QMainWindow):
         if move:
             self._enqueue_op(title, extract_fn)
             self._enqueue_op(
-                f"Удаление из {os.path.basename(browser.archive_path)}",
+                tr("Удаление из {name}").format(
+                name=os.path.basename(browser.archive_path)),
                 lambda progress_cb, is_cancelled: browser.delete_members(members),
                 after=self.refresh_all)
         else:
@@ -884,15 +906,15 @@ class MainWindow(QMainWindow):
             return
         sources = self.active.selected_entries()
         if not sources:
-            self._status("Нет отмеченных объектов (Insert — отметить)")
+            self._status(tr("Нет отмеченных объектов (Insert — отметить)"))
             return
         if permanent:
-            action, button = "Удалить безвозвратно", "Удалить навсегда"
-            title = "Удаление безвозвратно"
+            action, button = tr("Удалить безвозвратно"), tr("Удалить навсегда")
+            title = tr("Удаление безвозвратно")
             fn = self._fs_fn(KIND_DELETE, None, sources)
         else:
-            action, button = "Переместить в корзину", "В корзину"
-            title = "Удаление (в корзину)"
+            action, button = tr("Переместить в корзину"), tr("В корзину")
+            title = tr("Удаление (в корзину)")
             fn = (lambda progress_cb, is_cancelled:
                   execute_trash(sources, progress_cb, is_cancelled))
         if not confirm_delete(self, sources, self.active.current_path(),
@@ -905,43 +927,44 @@ class MainWindow(QMainWindow):
         browser = panel.vfs
         sources = panel.selected_entries()
         if not sources or browser is None:
-            self._status("Нет отмеченных объектов (Insert — отметить)")
+            self._status(tr("Нет отмеченных объектов (Insert — отметить)"))
             return
         if not confirm_delete(self, sources, panel.current_path()):
             return
         members = [e.path.partition("::")[2] for e in sources]
         self._enqueue_op(
-            f"Удаление из {os.path.basename(browser.archive_path)}",
+            tr("Удаление из {name}").format(
+                name=os.path.basename(browser.archive_path)),
             lambda progress_cb, is_cancelled: browser.delete_members(members),
             after=self.refresh_all)
 
     def do_pack(self):
         if self.active.is_vfs:
-            self._status("Сначала извлеките объекты из архива")
+            self._status(tr("Сначала извлеките объекты из архива"))
             return
         sources = self.active.selected_entries()
         if not sources:
-            self._status("Нет отмеченных объектов (Insert — отметить)")
+            self._status(tr("Нет отмеченных объектов (Insert — отметить)"))
             return
         dest_panel = self._other()
         default_name = os.path.splitext(sources[0].name)[0] + ".zip"
-        name, ok = QInputDialog.getText(self, "Запаковать",
-                                        f"Имя архива (в {dest_panel.current_path()}):",
+        name, ok = QInputDialog.getText(self, tr("Запаковать"),
+                                        tr("Имя архива (в {dir}):").format(dir=dest_panel.current_path()),
                                         text=default_name)
         if not ok or not name.strip():
             return
-        fmt, ok = QInputDialog.getItem(self, "Запаковать", "Формат:",
+        fmt, ok = QInputDialog.getItem(self, tr("Запаковать"), tr("Формат:"),
                                        ("zip", "tar.gz", "tar.bz2", "tar.xz"), 0, False)
         if not ok:
             return
         out = os.path.join(dest_panel.current_path(), name.strip())
         if os.path.lexists(out):
-            ret = QMessageBox.question(self, "Файл существует",
-                                       f"{out}\nПерезаписать?",
+            ret = QMessageBox.question(self, tr("Файл существует"),
+                                       tr("{out}\nПерезаписать?").format(out=out),
                                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if ret != QMessageBox.Yes:
                 return
-        self._enqueue_op("Запаковка",
+        self._enqueue_op(tr("Запаковка"),
                          lambda progress_cb, is_cancelled:
                          pack_items(sources, out, fmt, progress_cb, is_cancelled),
                          after=lambda: dest_panel.reveal(os.path.basename(out)))
@@ -949,7 +972,7 @@ class MainWindow(QMainWindow):
     def do_unpack(self):
         entries = [e for e in self.active.selected_entries() if archive_format(e.path)]
         if not entries:
-            self._status("Выберите архив (.zip, .tar, .tgz, .tar.bz2, .tar.xz)")
+            self._status(tr("Выберите архив (.zip, .tar, .tgz, .tar.bz2, .tar.xz)"))
             return
         dest = self._other().current_path()
         bridge = self._bridge
@@ -958,16 +981,16 @@ class MainWindow(QMainWindow):
                 return unpack_archive(_archive, dest, progress_cb, is_cancelled,
                                       ask_cb=bridge.ask)
 
-            self._enqueue_op(f"Распаковка {entry.name}", fn, after=self.refresh_all)
+            self._enqueue_op(tr("Распаковка {name}").format(name=entry.name), fn, after=self.refresh_all)
 
     def do_batch_rename(self):
         panel = self.active
         if panel.is_vfs:
-            self._status("Групповое переименование в архиве не поддерживается")
+            self._status(tr("Групповое переименование в архиве не поддерживается"))
             return
         names = [e.name for e in panel.selected_entries()]
         if not names:
-            self._status("Нет объектов для переименования")
+            self._status(tr("Нет объектов для переименования"))
             return
         dlg = BatchRenameDialog(self, names)
         if dlg.exec() != QDialog.Accepted or not dlg.pairs:
@@ -981,7 +1004,7 @@ class MainWindow(QMainWindow):
             src = os.path.join(panel.current_path(), old)
             dst = os.path.join(panel.current_path(), new)
             if os.path.lexists(dst):
-                errors.append(f"{old} — назначение уже существует: {new}")
+                errors.append(tr("{old} — назначение уже существует: {new}").format(old=old, new=new))
                 continue
             try:
                 os.rename(src, dst)
@@ -989,54 +1012,54 @@ class MainWindow(QMainWindow):
                 if first_new is None:
                     first_new = new
             except OSError as exc:
-                errors.append(f"{old} — {exc.strerror or exc}")
+                errors.append(tr("{old} — {err}").format(old=old, err=exc.strerror or exc))
         panel.reveal(first_new or names[0])
         if errors:
             box = QMessageBox(self)
             box.setIcon(QMessageBox.Warning)
-            box.setWindowTitle("Переименование")
-            box.setText(f"Переименовано: {done}, ошибок: {len(errors)}.")
+            box.setWindowTitle(tr("Переименование"))
+            box.setText(tr("Переименовано: {done}, ошибок: {n}.").format(done=done, n=len(errors)))
             box.setDetailedText("\n".join(errors[:200]))
             box.exec()
         else:
-            self._status(f"Переименовано: {done}")
+            self._status(tr("Переименовано: {n}").format(n=done))
 
     def compare_dirs(self):
         if self.left.is_vfs or self.right.is_vfs:
-            self._status("Сравнение каталогов работает для обычных каталогов")
+            self._status(tr("Сравнение каталогов работает для обычных каталогов"))
             return
         left = {e.name: e for e in self.left.model.entries if not e.is_dir}
         right = {e.name: e for e in self.right.model.entries if not e.is_dir}
         diff_left, diff_right = compare_name_sets(left, right)
         self.left.model.set_compared(diff_left)
         self.right.model.set_compared(diff_right)
-        self._status(f"Сравнение каталогов: {len(diff_left)} отличий слева, "
-                     f"{len(diff_right)} справа (выделено синим)")
+        self._status(tr("Сравнение каталогов: {left} отличий слева, {right} справа (выделено синим)").format(
+            left=len(diff_left), right=len(diff_right)))
 
     def do_mkdir(self):
         panel = self.active
         if panel.is_vfs:
-            self._status("Создание папок в архиве не поддерживается")
+            self._status(tr("Создание папок в архиве не поддерживается"))
             return
-        name, ok = QInputDialog.getText(self, "Новая папка", "Имя папки:", text="")
+        name, ok = QInputDialog.getText(self, tr("Новая папка"), tr("Имя папки:"), text="")
         if not ok or not name.strip():
             return
         try:
             os.makedirs(os.path.join(panel.current_path(), name.strip()))
         except OSError as exc:
-            QMessageBox.critical(self, "Ошибка",
-                                 f"Не удалось создать папку:\n{exc.strerror or exc}")
+            QMessageBox.critical(self, tr("Ошибка"),
+                                 tr("Не удалось создать папку:\n{err}").format(err=exc.strerror or exc))
             return
         panel.reveal(name.strip())
 
     def do_rename(self):
         panel = self.active
         if panel.is_vfs:
-            self._status("Переименование в архиве не поддерживается")
+            self._status(tr("Переименование в архиве не поддерживается"))
             return
         entry = panel.current_entry()
         if entry is None:
-            self._status("Нет объекта под курсором")
+            self._status(tr("Нет объекта под курсором"))
             return
         dlg = make_rename_dialog(self, entry)
         name = dlg.textValue() if dlg.exec() else ""
@@ -1045,8 +1068,8 @@ class MainWindow(QMainWindow):
         try:
             os.rename(entry.path, os.path.join(panel.current_path(), name.strip()))
         except OSError as exc:
-            QMessageBox.critical(self, "Ошибка",
-                                 f"Не удалось переименовать:\n{exc.strerror or exc}")
+            QMessageBox.critical(self, tr("Ошибка"),
+                                 tr("Не удалось переименовать:\n{err}").format(err=exc.strerror or exc))
             return
         panel.reveal(name.strip())
 
@@ -1073,10 +1096,10 @@ class MainWindow(QMainWindow):
                 self.cmdline.remember(cmd)
                 self.cmdline.clear()
             else:
-                self._status(f"cd: каталог не найден: {resolved}")
+                self._status(tr("cd: каталог не найден: {path}").format(path=resolved))
             return
         if self._proc is not None and self._proc.state() != QProcess.NotRunning:
-            self._status("Предыдущая команда ещё выполняется")
+            self._status(tr("Предыдущая команда ещё выполняется"))
             return
         self._out = []
         self._proc = QProcess(self)
@@ -1099,17 +1122,17 @@ class MainWindow(QMainWindow):
         self.cmdline.remember(cmd)
         self.cmdline.clear()
         if output or code != 0:
-            text = output or "(без вывода)"
+            text = output or tr("(без вывода)")
             if len(text) > 8000:
                 text = text[:8000] + "\n…"
             box = QMessageBox(self)
-            box.setWindowTitle("Командная строка")
+            box.setWindowTitle(tr("Командная строка"))
             box.setIcon(QMessageBox.Information if code == 0 else QMessageBox.Warning)
-            box.setText(f"$ {cmd}\nкод выхода: {code}")
+            box.setText(tr("$ {cmd}\nкод выхода: {code}").format(cmd=cmd, code=code))
             box.setDetailedText(text)
             box.exec()
         else:
-            self._status(f"$ {cmd} — готово")
+            self._status(tr("$ {cmd} — готово").format(cmd=cmd))
         self.refresh_all()
 
     # ------------------------------------------------------------- жизненный цикл
@@ -1117,8 +1140,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self._thread is not None:
             ret = QMessageBox.question(
-                self, "Операция выполняется",
-                "Идёт файловая операция. Прервать её и выйти?",
+                self, tr("Операция выполняется"),
+                tr("Идёт файловая операция. Прервать её и выйти?"),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if ret != QMessageBox.Yes:
                 event.ignore()
@@ -1166,7 +1189,15 @@ def _selfcheck() -> int:
     return 0 if not failed else 1
 
 
+def _apply_language() -> None:
+    """Выбранный в меню язык применяется до построения интерфейса."""
+    val = config.qsettings().value("view/language", "ru")
+    if val in ("ru", "en", "zh"):
+        i18n.LANG = val
+
+
 def main(argv=None):
+    _apply_language()
     import argparse
 
     raw = list(sys.argv[1:] if argv is None else argv)
@@ -1174,9 +1205,9 @@ def main(argv=None):
         return _selfcheck()
     parser = argparse.ArgumentParser(
         prog="sphaera-commander",
-        description="Sphaera Commander — двухпанельный файловый менеджер")
-    parser.add_argument("paths", nargs="*", metavar="КАТАЛОГ",
-                        help="каталог для левой (и правой) панели")
+        description=tr("Sphaera Commander — двухпанельный файловый менеджер"))
+    parser.add_argument("paths", nargs="*", metavar=tr("КАТАЛОГ"),
+                        help=tr("каталог для левой (и правой) панели"))
     parser.add_argument("--version", action="version",
                         version=f"Sphaera Commander {__version__}")
     ns = parser.parse_args(raw)
