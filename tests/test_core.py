@@ -12,6 +12,9 @@ import unittest
 
 # offscreen до любых импортов PySide6
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# тесты, закрывающие MainWindow, сохраняют геометрию через save_window —
+# изолируем QSettings, чтобы не портить настройки реального приложения
+os.environ.setdefault("XDG_CONFIG_HOME", tempfile.mkdtemp(prefix="sc_xdg_"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sphaera_commander.fsmodel import (  # noqa: E402
@@ -606,3 +609,59 @@ class FullscreenTests(QtTestCase):
         w._exit_fullscreen()
         self.assertFalse(w.isFullScreen())
         self.assertFalse(w.menuBar().isHidden())
+
+
+class WindowGeometryTests(QtTestCase):
+    """Стартовый размер: ~половина площади экрана; мелкая геометрия
+    старых версий/тестов не восстанавливается."""
+
+    def setUp(self):
+        from sphaera_commander import config
+
+        config.qsettings().remove("window/geometry")
+
+    def test_first_start_uses_half_screen(self):
+        from PySide6.QtGui import QGuiApplication
+
+        from sphaera_commander.app import MainWindow
+
+        w = MainWindow()
+        try:
+            avail = QGuiApplication.primaryScreen().availableGeometry()
+            self.assertEqual(w.width(), max(int(avail.width() * 0.7), 820))
+            self.assertEqual(w.height(), max(int(avail.height() * 0.7), 520))
+        finally:
+            w.close()
+
+    def test_stale_small_geometry_upgraded(self):
+        from sphaera_commander.app import MainWindow
+        from sphaera_commander import config
+
+        w = MainWindow()
+        w.resize(500, 300)  # как осталось бы от старой версии или теста
+        config.save_window(w)
+        w.close()
+        w2 = MainWindow()
+        try:
+            self.assertGreaterEqual(w2.width(), 700)
+            self.assertGreaterEqual(w2.height(), 480)
+        finally:
+            w2.close()
+
+    def test_normal_saved_geometry_kept(self):
+        from sphaera_commander.app import MainWindow
+        from sphaera_commander import config
+
+        w = MainWindow()
+        # 760×600: больше порога «мелкой» геометрии и помещается
+        # на виртуальный экран offscreen (restoreGeometry не расширяет
+        # окно сверх экрана)
+        w.resize(760, 600)
+        config.save_window(w)
+        w.close()
+        w2 = MainWindow()
+        try:
+            self.assertEqual((w2.width(), w2.height()), (760, 600))
+        finally:
+            w2.close()
+            config.qsettings().remove("window/geometry")

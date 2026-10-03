@@ -9,6 +9,9 @@ import unittest
 import unittest.mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# MainWindow при закрытии пишет геометрию в QSettings — изолируем от
+# настроек реального приложения
+os.environ.setdefault("XDG_CONFIG_HOME", tempfile.mkdtemp(prefix="sc_xdg_qv_"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtWidgets import QApplication  # noqa: E402

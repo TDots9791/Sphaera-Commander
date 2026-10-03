@@ -38,14 +38,31 @@ def save_panel(panel, prefix: str) -> None:
     s.setValue(f"panels/{prefix}/sort_desc", panel.model.sort_desc)
 
 
+def default_geometry(win) -> None:
+    """Размер при первом запуске: ~половина площади экрана (0.7×0.7)."""
+    from PySide6.QtGui import QGuiApplication
+
+    screen = QGuiApplication.primaryScreen()
+    if screen is None:
+        win.resize(1150, 720)
+        return
+    avail = screen.availableGeometry()
+    win.resize(max(int(avail.width() * 0.7), 820),
+               max(int(avail.height() * 0.7), 520))
+
+
 def load_window(win) -> bool:
     """Восстановить геометрию; вернуть флаг показа скрытых файлов."""
     s = qsettings()
     geometry = s.value("window/geometry")
     if geometry is not None:
         win.restoreGeometry(geometry)
+        # микроскопическое окно (осталось от старых версий или тестов) —
+        # не рабочий размер: заменяем расчётным
+        if win.width() < 700 or win.height() < 480:
+            default_geometry(win)
     else:
-        win.resize(1150, 720)
+        default_geometry(win)
     sizes = s.value("window/splitter")
     if sizes:
         try:
