@@ -281,7 +281,7 @@ class BrandThemeTests(unittest.TestCase):
         for name in ("icon-128.png", "icon-256.png", "logo.png"):
             img = QImage(str(base / name))
             self.assertFalse(img.isNull(), name)
-        self.assertFalse((base / "icon.svg").exists())  # растровая айдентика
+        self.assertTrue((base / "icon.svg").exists())  # векторный источник
 
     def test_brand_constants_match_identity(self):
         from sphaera_commander import theme

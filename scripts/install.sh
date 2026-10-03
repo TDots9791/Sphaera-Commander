@@ -75,8 +75,9 @@ $SUDO mkdir -p "$DESKTOP_DIR" \
               "$ICON_DIR/256x256/apps"
 $SUDO cp sphaera_commander/assets/sphaera-commander.desktop \
          "$DESKTOP_DIR/sphaera-commander.desktop"
-# фирменная иконка — весы Iustitia (растровые; устаревший SVG убираем)
-$SUDO rm -f "$ICON_DIR/scalable/apps/sphaera-commander.svg"
+# фирменная иконка: две панели + сфера (SVG + растровые размеры)
+$SUDO cp sphaera_commander/assets/icon.svg \
+         "$ICON_DIR/scalable/apps/sphaera-commander.svg"
 $SUDO cp sphaera_commander/assets/icon-128.png \
          "$ICON_DIR/128x128/apps/sphaera-commander.png"
 $SUDO cp sphaera_commander/assets/icon-256.png \
