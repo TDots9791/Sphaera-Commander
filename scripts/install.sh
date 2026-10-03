@@ -71,28 +71,19 @@ $SUDO chmod +x "$BINDIR/sphaera-commander"
 
 echo "==> ярлык и иконки"
 $SUDO mkdir -p "$DESKTOP_DIR" \
-              "$ICON_DIR/scalable/apps" \
               "$ICON_DIR/128x128/apps" \
               "$ICON_DIR/256x256/apps"
 $SUDO cp sphaera_commander/assets/sphaera-commander.desktop \
          "$DESKTOP_DIR/sphaera-commander.desktop"
-$SUDO cp sphaera_commander/assets/icon.svg \
-         "$ICON_DIR/scalable/apps/sphaera-commander.svg"
-.venv/bin/python - <<PY
-import os
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage
-img = QImage("sphaera_commander/assets/icon.svg")
-assert not img.isNull(), "не удалось отрисовать icon.svg"
-for size in (128, 256):
-    scaled = img.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-    out = "$ICON_DIR/%dx%d/apps/sphaera-commander.png" % (size, size)
-    if not scaled.save(out):
-        raise SystemExit("не удалось сохранить " + out)
-print("иконки PNG созданы")
-PY
+# фирменная иконка — весы Iustitia (растровые; устаревший SVG убираем)
+$SUDO rm -f "$ICON_DIR/scalable/apps/sphaera-commander.svg"
+$SUDO cp sphaera_commander/assets/icon-128.png \
+         "$ICON_DIR/128x128/apps/sphaera-commander.png"
+$SUDO cp sphaera_commander/assets/icon-256.png \
+         "$ICON_DIR/256x256/apps/sphaera-commander.png"
 
+command -v gtk-update-icon-cache >/dev/null 2>&1 && \
+    gtk-update-icon-cache -qtf "$ICON_DIR" 2>/dev/null || true
 command -v update-desktop-database >/dev/null 2>&1 && \
     update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
 

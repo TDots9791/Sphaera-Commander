@@ -1093,7 +1093,7 @@ def _app_icon():
     from PySide6.QtGui import QIcon
 
     base = Path(__file__).parent / "assets"
-    for name in ("icon-256.png", "icon-128.png", "icon.svg"):
+    for name in ("icon-256.png", "icon-128.png"):
         if (base / name).exists():
             return QIcon(str(base / name))
     return QIcon()

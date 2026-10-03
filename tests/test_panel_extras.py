@@ -272,6 +272,17 @@ class BrandThemeTests(unittest.TestCase):
             default.color(QPalette.ColorRole.Window).name())
         _ = base_before
 
+    def test_icon_assets_present_and_valid(self):
+        from pathlib import Path
+
+        from PySide6.QtGui import QImage
+
+        base = Path(__file__).parent.parent / "sphaera_commander" / "assets"
+        for name in ("icon-128.png", "icon-256.png", "logo.png"):
+            img = QImage(str(base / name))
+            self.assertFalse(img.isNull(), name)
+        self.assertFalse((base / "icon.svg").exists())  # растровая айдентика
+
     def test_brand_constants_match_identity(self):
         from sphaera_commander import theme
 
