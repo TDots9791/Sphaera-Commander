@@ -34,6 +34,13 @@ class FileEntry:
     mode: int
 
 
+@dataclass(frozen=True)
+class DirStats:
+    size: int
+    dirs: int
+    files: int
+
+
 DOTDOT = FileEntry(name="..", path="", is_dir=True, is_link=False, size=-1, mtime=0.0, mode=0)
 
 
@@ -92,6 +99,39 @@ def human_size(n: int) -> str:
         if n < 1024:
             return f"{n:,.1f}".replace(",", " ").removesuffix(".0") + " " + unit
     return f"{n:,.0f}".replace(",", " ") + " ПиБ"
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    """Русские формы: 1 файл / 2 файла / 5 файлов."""
+    if n % 10 == 1 and n % 100 != 11:
+        return f"{n} {one}"
+    if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14):
+        return f"{n} {few}"
+    return f"{n} {many}"
+
+
+def dir_stats(path: str) -> DirStats:
+    """Рекурсивно: суммарный размер, число подпапок и файлов.
+    Симлинки не разворачиваются (как du без -L): считаются файлами;
+    ошибки доступа пропускаются."""
+    size = dirs = files = 0
+    stack = [path]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for entry in it:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            dirs += 1
+                            stack.append(entry.path)
+                        else:
+                            files += 1
+                            size += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return DirStats(size, dirs, files)
 
 
 def mode_string(mode: int) -> str:

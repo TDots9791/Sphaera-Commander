@@ -27,10 +27,13 @@ from .archives import ArchiveBrowser, archive_format, norm_member
 from . import thumbnails
 from .fsmodel import (
     EXT_COL,
+    DirStats,
     FileEntry,
     FileTableModel,
     NAME_COL,
+    dir_stats,
     human_size,
+    plural,
     scan_directory,
     sort_entries,
 )
@@ -198,6 +201,7 @@ class FilePanel(QWidget):
     cursor_changed = Signal(object)  # FileEntry | None — для быстрого просмотра
     loaded = Signal(object)
     drop_requested = Signal(list, str)  # [пути], каталог назначения
+    dir_info_ready = Signal(str, object)  # путь, DirStats — из фонового воркера
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -247,6 +251,14 @@ class FilePanel(QWidget):
         self._refresh_timer.setSingleShot(True)
         self._refresh_timer.setInterval(150)
         self._refresh_timer.timeout.connect(self._watched_refresh)
+
+        self._dirinfo_cache: dict[str, DirStats] = {}
+        self._dirinfo_lock = threading.Lock()
+        self._dirinfo_wanted: str | None = None
+        self._dirinfo_wake = threading.Event()
+        threading.Thread(target=self._dirinfo_worker, daemon=True,
+                         name="panel-dirinfo").start()
+        self.dir_info_ready.connect(self._on_dir_info_ready)
 
         self.model.dataChanged.connect(lambda *_: self.update_status())
         self.model.modelReset.connect(self._on_model_reset)
@@ -400,6 +412,7 @@ class FilePanel(QWidget):
             return
         keep = self._reveal_name or self._cursor_name()
         self._reveal_name = None
+        self._dirinfo_cache.clear()  # содержимое каталога могло измениться
         self.model.set_entries(payload["path"], payload["entries"])
         self._restore_cursor(keep)
         # курсор восстановлен — содержимое под ним могло измениться
@@ -417,6 +430,39 @@ class FilePanel(QWidget):
     def _on_cursor_changed(self, current, _previous) -> None:
         row = current.row()
         self.cursor_changed.emit(None if row <= 0 else self.model.entry_at(row))
+        self._schedule_dir_info(self.model.entry_at(row))
+
+    # -- сведения о папке под курсором (фон) ---------------------------------
+
+    def _schedule_dir_info(self, entry: FileEntry | None) -> None:
+        self.update_status()
+        if entry is None or not entry.is_dir or self.is_vfs:
+            return
+        if entry.path in self._dirinfo_cache:
+            return  # посчитано ранее — уже показано
+        with self._dirinfo_lock:
+            self._dirinfo_wanted = entry.path
+            self._dirinfo_wake.set()
+
+    def _dirinfo_worker(self) -> None:
+        """Рабочий поток панели: считает статистику последней запрошенной
+        папки; накопившиеся промежуточные запросы вытесняются последним."""
+        while True:
+            self._dirinfo_wake.wait()
+            with self._dirinfo_lock:
+                path = self._dirinfo_wanted
+                self._dirinfo_wanted = None
+                self._dirinfo_wake.clear()
+            if path is None:
+                continue
+            stats = dir_stats(path)
+            self.dir_info_ready.emit(path, stats)
+
+    def _on_dir_info_ready(self, path: str, stats: DirStats) -> None:
+        self._dirinfo_cache[path] = stats
+        cur = self.current_entry()
+        if cur is not None and cur.path == path:
+            self.update_status()
 
     def _on_path_edited(self) -> None:
         self.cd(self.path_combo.lineEdit().text())
@@ -510,6 +556,13 @@ class FilePanel(QWidget):
         text = f"файлов: {files}   папок: {dirs}   {human_size(total)}"
         if m_count:
             text += f"   •   отмечено: {m_count} ({human_size(m_bytes)})"
+        cur = self.current_entry()
+        if cur is not None and cur.is_dir and not self.is_vfs:
+            st = self._dirinfo_cache.get(cur.path)
+            if st is not None:
+                text += (f"   •   {cur.name}: {human_size(st.size)} • "
+                         f"{plural(st.dirs, 'подпапка', 'подпапки', 'подпапок')} • "
+                         f"{plural(st.files, 'файл', 'файла', 'файлов')}")
         self.status_label.setText(text)
 
     def _on_model_reset(self) -> None:

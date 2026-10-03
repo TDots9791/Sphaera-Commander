@@ -341,6 +341,25 @@ class ModelTests(QtTestCase):
         kinds = [e.is_dir for e in entries]
         self.assertEqual(kinds, sorted(kinds, reverse=True))
 
+    def test_dir_stats_and_plural(self):
+        from sphaera_commander.fsmodel import dir_stats, plural
+
+        os.symlink("/nonexistent-or-outside", os.path.join(self.tmp, "link.d"))
+        st = dir_stats(self.tmp)
+        # build_tree: a.txt, b.log, sub/c.txt, sub/deep/d.bin; каталоги
+        # sub, sub/deep и empty; симлинк не разворачивается и считается файлом
+        self.assertEqual(st.files, 5)
+        self.assertEqual(st.dirs, 3)
+        # размер симлинка = длина строки-цели
+        self.assertEqual(st.size,
+                         5 + 400 + 5 + 5000 + len("/nonexistent-or-outside"))
+        self.assertEqual(plural(1, "файл", "файла", "файлов"), "1 файл")
+        self.assertEqual(plural(2, "файл", "файла", "файлов"), "2 файла")
+        self.assertEqual(plural(5, "файл", "файла", "файлов"), "5 файлов")
+        self.assertEqual(plural(11, "подпапка", "подпапки", "подпапок"),
+                         "11 подпапок")
+        self.assertEqual(plural(12, "файл", "файла", "файлов"), "12 файлов")
+
 
 class PanelTests(QtTestCase):
     def setUp(self):
@@ -451,6 +470,28 @@ class PanelTests(QtTestCase):
         idx = v.model().index(v.model().row_of_name("a.txt"), NAME_COL)
         self.assertEqual(v.name_tooltip(idx), "")
         self.panel.hide()
+
+    def test_status_shows_dir_stats_under_cursor(self):
+        import time as time_m
+
+        self.panel.view.set_current_row(
+            self.panel.model.row_of_name("sub"))
+        deadline = time_m.monotonic() + 5
+        while time_m.monotonic() < deadline:
+            self.app.processEvents()
+            time_m.sleep(0.01)
+            if "подпапка" in self.panel.status_label.text():
+                break
+        text = self.panel.status_label.text()
+        self.assertIn("sub:", text)
+        self.assertIn("1 подпапка", text)   # sub/deep
+        self.assertIn("2 файла", text)      # c.txt и deep/d.bin
+
+        self.panel.view.set_current_row(
+            self.panel.model.row_of_name("a.txt"))
+        for _ in range(10):
+            self.app.processEvents()
+        self.assertNotIn("подпап", self.panel.status_label.text())
 
 
 class PlanTests(unittest.TestCase):
