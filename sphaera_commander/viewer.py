@@ -18,10 +18,21 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import tempfile
+import threading
 import xml.etree.ElementTree as ET
 from html import escape
 
-from PySide6.QtCore import QUrl, QSize, Qt, QTimer
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QUrl,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QColor,
     QDesktopServices,
@@ -36,6 +47,7 @@ from PySide6.QtGui import (
     QTextCursor,
     QTextFrameFormat,
     QTextFormat,
+    QTextDocument,
     QTextTable,
 )
 from PySide6.QtWidgets import (
@@ -53,8 +65,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
+    QTableView,
     QTextBrowser,
     QTextEdit,
     QTreeWidget,
@@ -64,6 +75,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import previewers as pv
+from . import slide_render
 
 TEXT_LIMIT = 16 * 1024 * 1024   # показываем не больше 16 МиБ текста
 HEX_LIMIT = 2 * 1024 * 1024     # и 2 МиБ hex-обзора
@@ -308,8 +320,53 @@ def collect_json_tree(data, root: "QTreeWidgetItem", _depth: int = 0) -> int:
     return count
 
 
+class SheetModel(QAbstractTableModel):
+    """Таблица поверх списков строк: без QTableWidgetItem — держит
+    сотни тысяч строк, QTableView рисует только видимое."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._rows: list[list[str]] = []
+        self._cols = 0
+
+    def reset_rows(self) -> None:
+        self.beginResetModel()
+        self._rows = []
+        self._cols = 0
+        self.endResetModel()
+
+    def append_rows(self, rows: list[list[str]]) -> None:
+        if not rows:
+            return
+        first = len(self._rows)
+        self.beginInsertRows(QModelIndex(), first, first + len(rows) - 1)
+        self._rows.extend(rows)
+        self._cols = max(self._cols, max((len(r) for r in rows), default=0))
+        self.endInsertRows()
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._rows)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else self._cols
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or role != Qt.DisplayRole:
+            return None
+        row = self._rows[index.row()]
+        col = index.column()
+        return row[col] if col < len(row) else None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            return str(section + 1)
+        return None
+
+
 class FileViewerDialog(QDialog):
     """Просмотр/правка одного файла; files — список для навигации след/пред."""
+
+    gridBatch = Signal(object)
 
     def __init__(self, parent, files: list[str], index: int, editable: bool):
         super().__init__(parent)
@@ -328,6 +385,11 @@ class FileViewerDialog(QDialog):
         self._pdf_scale = 2.0
         self._doc_items: list[tuple[str, str]] = []
         self._sheets: list[tuple[str, list[list[str]]]] = []
+        self._temp_dirs: list[str] = []
+        self._grid_sources: list[tuple] = []
+        self._deck: dict | None = None
+        self._slides_text: list[tuple[int, str]] = []
+        self.gridBatch.connect(self._on_grid_batch)
         self._json_timer = QTimer(self)
         self._json_timer.setSingleShot(True)
         self._json_timer.setInterval(500)
@@ -410,13 +472,17 @@ class FileViewerDialog(QDialog):
         pdf_layout.addLayout(pdf_bar)
         pdf_layout.addWidget(self.pdf_inner, 1)
 
-        # -- страница таблиц (csv/xlsx)
+        # -- страница таблиц (csv/xlsx): модель + фоновая загрузка
+        self.sheet_model = SheetModel(self)
         self.sheet_combo = QComboBox()
         self.sheet_combo.hide()
         self.sheet_combo.currentIndexChanged.connect(self._on_sheet_changed)
-        self.grid = QTableWidget()
-        self.grid.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.grid = QTableView()
+        self.grid.setModel(self.sheet_model)
+        self.grid.setAlternatingRowColors(True)
         self.grid.verticalHeader().hide()
+        self.grid.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Interactive)
         grid_page = QWidget()
         grid_layout = QVBoxLayout(grid_page)
         grid_layout.setContentsMargins(0, 0, 0, 0)
@@ -688,6 +754,20 @@ class FileViewerDialog(QDialog):
         self._pdf_show()
 
     def _pdf_show(self) -> None:
+        self._page_show()
+
+    def _page_show(self) -> None:
+        """Отрисовать текущую страницу: pdf — через pdfium, pptx — свой рендер."""
+        if self.kind == "pptx":
+            pixmap = slide_render.render_slide(
+                self._deck, self._deck["slides"][self._pdf_index],
+                self._pdf_scale)
+            self.pdf_label.setPixmap(pixmap)
+            self.lbl_pdf_page.setText(
+                f"слайд {self._pdf_index + 1} из {self._pdf_count}")
+            self.lbl_info.setText(f"pptx: {self._pdf_count} слайд(ов) • "
+                                  f"масштаб {self._pdf_scale:.2f}x • свой рендер")
+            return
         data, w, h, stride = pv.pdf_render(self._pdf_path, self._pdf_index,
                                            self._pdf_scale)
         img = QImage(data, w, h, stride, QImage.Format.Format_BGR888)
@@ -702,24 +782,33 @@ class FileViewerDialog(QDialog):
             return
         self._pdf_index = new_index
         if self.btn_pdf_text.isChecked():
-            self.pdf_text.setPlainText(
-                pv.pdf_page_text(self._pdf_path, self._pdf_index))
+            self._pdf_fill_text()
         self.pdf_inner.setCurrentIndex(1 if self.btn_pdf_text.isChecked() else 0)
-        self._pdf_show()
+        self._page_show()
+
+    def _pdf_fill_text(self) -> None:
+        if self.kind == "pptx":
+            if 0 <= self._pdf_index < len(self._slides_text):
+                _n, html = self._slides_text[self._pdf_index]
+                doc = QTextDocument()
+                doc.setHtml(html)
+                self.pdf_text.setPlainText(doc.toPlainText())
+            return
+        self.pdf_text.setPlainText(
+            pv.pdf_page_text(self._pdf_path, self._pdf_index))
 
     def _pdf_show_text(self, on: bool) -> None:
         self.pdf_inner.setCurrentIndex(1 if on else 0)
         if on:
-            self.pdf_text.setPlainText(
-                pv.pdf_page_text(self._pdf_path, self._pdf_index))
+            self._pdf_fill_text()
 
     def _pdf_zoom(self, factor: float) -> None:
-        self._pdf_scale = max(0.5, min(6.0, self._pdf_scale * factor))
-        self._pdf_show()
+        self._pdf_scale = max(0.25, min(6.0, self._pdf_scale * factor))
+        self._page_show()
 
     def _pdf_rotate(self, delta: int) -> None:
         pv.pdf_rotate_pages(self._pdf_path, [self._pdf_index], delta)
-        self._pdf_show()
+        self._page_show()
 
     def _pdf_delete_page(self) -> None:
         ret = QMessageBox.question(
@@ -735,7 +824,7 @@ class FileViewerDialog(QDialog):
             self.reject()
             return
         self._pdf_index = min(self._pdf_index, self._pdf_count - 1)
-        self._pdf_show()
+        self._page_show()
 
     def _pdf_export(self) -> None:
         text, ok = QInputDialog.getText(
@@ -783,12 +872,13 @@ class FileViewerDialog(QDialog):
 
     def _load_epub(self, path: str) -> None:
         self.kind = "epub"
-        self._doc_items = pv.epub_chapters(path)
+        extract_dir = self._make_temp_dir()
+        self._doc_items = pv.epub_chapters(path, extract_dir)
         if not self._doc_items:
             raise ValueError("в книге нет текстовых глав")
         self.doc_combo.blockSignals(True)
         self.doc_combo.clear()
-        for title, _xhtml in self._doc_items:
+        for title, _xhtml, _base in self._doc_items:
             self.doc_combo.addItem(title)
         self.doc_combo.blockSignals(False)
         self.doc_combo.show()
@@ -796,72 +886,119 @@ class FileViewerDialog(QDialog):
         self._on_doc_combo(0)  # сигналы combo были заблокированы
         self.stack.setCurrentIndex(1)
         self.lbl_info.setText(f"epub: глав {len(self._doc_items)} • "
-                              "изображения и стили книг упрощены")
+                              "изображения показываются, CSS упрощён")
 
     def _load_pptx(self, path: str) -> None:
+        images_dir = self._make_temp_dir()
+        deck = pv.pptx_slides_rich(path, images_dir)
+        if not deck["slides"]:
+            raise ValueError("в презентации нет слайдов")
         self.kind = "pptx"
-        slides = pv.pptx_slides(path)
-        self._doc_items = [(f"Слайд {n}", html) for n, html in slides]
-        self.doc_combo.blockSignals(True)
-        self.doc_combo.clear()
-        for title, _html in self._doc_items:
-            self.doc_combo.addItem(title)
-        self.doc_combo.blockSignals(False)
-        self.doc_combo.show()
-        self.doc_combo.setCurrentIndex(0)
-        self._on_doc_combo(0)  # сигналы combo были заблокированы
-        self.stack.setCurrentIndex(1)
-        self.lbl_info.setText(f"pptx: слайдов {len(self._doc_items)} • текстовый просмотр")
+        self._deck = deck
+        self._slides_text = pv.pptx_slides(path)
+        self._pdf_count = len(deck["slides"])
+        self._pdf_index = 0
+        self._pdf_scale = 1.0
+        for b in (self.btn_pdf_prev, self.btn_pdf_next, self.btn_zoom_in,
+                  self.btn_zoom_out, self.btn_pdf_text):
+            b.show()
+        for b in (self.btn_pdf_rot_left, self.btn_pdf_rot_right,
+                  self.btn_pdf_delete, self.btn_pdf_export):
+            b.hide()
+        self.btn_pdf_text.setChecked(False)
+        self.pdf_inner.setCurrentIndex(0)
+        self.stack.setCurrentIndex(3)
+        self.search.setEnabled(False)
+        self.btn_replace_toggle.hide()
+        self._page_show()
 
     def _on_doc_combo(self, index: int) -> None:
-        if 0 <= index < len(self._doc_items):
-            _title, html = self._doc_items[index]
+        if not 0 <= index < len(self._doc_items):
+            return
+        item = self._doc_items[index]
+        if len(item) == 3:
+            _title, html, base = item
+            if base:
+                self.preview.document().setBaseUrl(
+                    QUrl.fromLocalFile(base + os.sep))
+            self.preview.setHtml(html)
+        else:
+            _title, html = item
             self.preview.setHtml(html)
 
     # xlsx / csv ---------------------------------------------------------------
 
     def _load_xlsx(self, path: str) -> None:
         self.kind = "xlsx"
-        self._sheets = pv.xlsx_sheets(path)
+        names = pv.xlsx_sheet_names(path)
+        self._grid_sources = [("xlsx", path, name) for name in names]
         self.sheet_combo.blockSignals(True)
         self.sheet_combo.clear()
-        for name, _rows in self._sheets:
+        for name in names:
             self.sheet_combo.addItem(name)
         self.sheet_combo.blockSignals(False)
-        self.sheet_combo.setVisible(len(self._sheets) > 1)
-        self.sheet_combo.setCurrentIndex(0)
-        self._on_sheet_changed(0)
+        self.sheet_combo.setVisible(len(names) > 1)
+        self._select_sheet(0)
         self.stack.setCurrentIndex(4)
 
     def _load_csv(self, path: str) -> None:
         self.kind = "csv"
         text, enc, truncated = text_preview(path)
-        delim, rows = pv.csv_grid(text)
-        self._sheets = [(path, rows)]
+        delim = pv.csv_sniff_delimiter(text)
+        self._grid_sources = [("csv", text, delim)]
         self.sheet_combo.hide()
-        self._fill_grid(rows)
-        self.stack.setCurrentIndex(4)
         note = " (обрезано)" if truncated else ""
-        self.lbl_info.setText(f"CSV: кодировка {enc}, разделитель {delim!r}{note}")
+        self._info_base = f"CSV: кодировка {enc}, разделитель {delim!r}{note}"
+        self._select_sheet(0, info_base=self._info_base)
+        self.stack.setCurrentIndex(4)
+
+    def _select_sheet(self, index: int, info_base: str = "") -> None:
+        if not 0 <= index < len(self._grid_sources):
+            return
+        kind, a, b = self._grid_sources[index]
+        if kind == "xlsx":
+            factory = lambda: pv.xlsx_rows_iter(a, b)  # noqa: E731
+            title = b
+        else:
+            factory = lambda: pv.csv_rows_iter(a, b)  # noqa: E731
+            title = "CSV"
+        self._start_grid_load(factory, title, info_base)
+
+    def _start_grid_load(self, factory, title: str, info_base: str = "") -> None:
+        self.sheet_model.reset_rows()
+        self._grid_info_base = info_base
+        self.lbl_info.setText((info_base + " • " if info_base else "")
+                              + f"чтение {title}…")
+        self._grid_error = ""
+
+        def worker():
+            batch: list[list[str]] = []
+            try:
+                for row in factory():
+                    batch.append(row)
+                    if len(batch) >= pv.GRID_BATCH:
+                        self.gridBatch.emit({"rows": batch})
+                        batch = []
+                self.gridBatch.emit({"rows": batch, "done": True})
+            except Exception as exc:  # битый файл — сообщим в статус
+                self.gridBatch.emit({"rows": batch, "done": True,
+                                     "error": str(exc)})
+
+        threading.Thread(target=worker, daemon=True, name="grid-load").start()
+
+    def _on_grid_batch(self, payload: dict) -> None:
+        self.sheet_model.append_rows(payload.get("rows", []))
+        if payload.get("done"):
+            if payload.get("error"):
+                self._grid_error = payload["error"]
+                self.lbl_info.setText(f"ошибка чтения: {payload['error']}")
+            else:
+                base = self._grid_info_base
+                self.lbl_info.setText((base + " • " if base else "")
+                                      + f"строк: {self.sheet_model.rowCount()}")
 
     def _on_sheet_changed(self, index: int) -> None:
-        if 0 <= index < len(self._sheets):
-            _name, rows = self._sheets[index]
-            self._fill_grid(rows)
-
-    def _fill_grid(self, rows: list[list[str]]) -> None:
-        view_cap = 3000
-        view = rows[:view_cap]
-        cols = min(max((len(r) for r in view), default=1), 64)
-        self.grid.clear()
-        self.grid.setRowCount(len(view))
-        self.grid.setColumnCount(cols)
-        for r, row in enumerate(view):
-            for c in range(min(len(row), cols)):
-                self.grid.setItem(r, c, QTableWidgetItem(row[c]))
-        self.grid.resizeColumnsToContents()
-        if len(rows) > view_cap:
-            self.lbl_info.setText(f"показаны первые {view_cap} строк из {len(rows)}")
+        self._select_sheet(index)
 
     # html / fb2 -------------------------------------------------------------
 
@@ -1105,6 +1242,17 @@ class FileViewerDialog(QDialog):
         self.lbl_pos.setText(
             f"строка {cursor.blockNumber() + 1}, "
             f"столбец {cursor.positionInBlock() + 1}")
+
+    def _make_temp_dir(self) -> str:
+        d = tempfile.mkdtemp(prefix="sphaera-view-")
+        self._temp_dirs.append(d)
+        return d
+
+    def done(self, result) -> None:  # accept() и reject() проходят через done()
+        for d in self._temp_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+        self._temp_dirs.clear()
+        super().done(result)
 
     def _open_external(self) -> None:
         """Ctrl+E: открыть файл системным приложением (член архива — через temp)."""

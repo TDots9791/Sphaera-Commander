@@ -252,10 +252,22 @@ class SheetTests(ViewerBase):
         dlg = FileViewerDialog(None, [path], 0, editable=False)
         self.assertEqual(dlg.kind, "xlsx")
         self.assertEqual(dlg.stack.currentIndex(), 4)
-        self.assertEqual(dlg.grid.item(1, 0).text(), "Хлеб")
+        self._wait_grid(dlg)
+        self.assertEqual(dlg.sheet_model.rowCount(), 2)
+        self.assertEqual(dlg.sheet_model.index(1, 0).data(), "Хлеб")
         dlg.sheet_combo.setCurrentIndex(1)
-        self.assertEqual(dlg.grid.item(0, 0).text(), "итог")
+        self._wait_grid(dlg)
+        self.assertEqual(dlg.sheet_model.index(0, 0).data(), "итог")
         dlg.reject()
+
+    @staticmethod
+    def _wait_grid(dlg, timeout_s: float = 10.0) -> None:
+        import time as _time
+
+        deadline = _time.time() + timeout_s
+        while _time.time() < deadline and "чтение" in dlg.lbl_info.text():
+            QApplication.processEvents()
+            _time.sleep(0.01)
 
     def test_csv_grid_and_viewer(self):
         path = os.path.join(self.tmp, "d.csv")
@@ -268,7 +280,8 @@ class SheetTests(ViewerBase):
 
         dlg = FileViewerDialog(None, [path], 0, editable=False)
         self.assertEqual(dlg.kind, "csv")
-        self.assertEqual(dlg.grid.item(0, 1).text(), "b")
+        SheetTests._wait_grid(dlg)
+        self.assertEqual(dlg.sheet_model.index(0, 1).data(), "b")
         self.assertIn(";", dlg.lbl_info.text())
         dlg.reject()
 
@@ -282,15 +295,24 @@ class PptxTests(ViewerBase):
         self.assertEqual(slides[0][0], 1)
         self.assertIn("Заголовок", slides[0][1])
 
-    def test_pptx_viewer(self):
+    def test_pptx_viewer_renders_slide(self):
         from sphaera_commander.viewer import FileViewerDialog
 
         path = os.path.join(self.tmp, "d.pptx")
         make_pptx(path)
         dlg = FileViewerDialog(None, [path], 0, editable=False)
         self.assertEqual(dlg.kind, "pptx")
-        self.assertEqual(dlg.stack.currentIndex(), 1)
-        self.assertIn("Заголовок", dlg.preview.document().toPlainText())
+        self.assertEqual(dlg.stack.currentIndex(), 3)  # страница-просмотрщик
+        self.assertIn("слайд 1 из 1", dlg.lbl_pdf_page.text())
+        self.assertFalse(dlg.pdf_label.pixmap().isNull())
+        # слайд не пустой: заголовок нарисован (есть тёмные пиксели)
+        img = dlg.pdf_label.pixmap().toImage()
+        dark = sum(1 for x in range(0, img.width(), 4)
+                   for y in range(0, img.height(), 4)
+                   if img.pixelColor(x, y).lightness() < 100)
+        self.assertGreater(dark, 5)
+        dlg.btn_pdf_text.setChecked(True)
+        self.assertIn("Заголовок", dlg.pdf_text.toPlainText())
         dlg.reject()
 
 
@@ -299,8 +321,15 @@ class WebBookTests(ViewerBase):
         path = os.path.join(self.tmp, "d.epub")
         make_epub(path)
         chapters = pv.epub_chapters(path)
-        self.assertEqual([t for t, _ in chapters], ["Глава 1", "Глава 2"])
+        self.assertEqual([t for t, _, _ in chapters], ["Глава 1", "Глава 2"])
         self.assertIn("начало книги", chapters[0][1])
+        self.assertIsNone(chapters[0][2])
+
+        # с распаковкой: base — реальный каталог для картинок
+        extract = os.path.join(self.tmp, "ex")
+        chapters = pv.epub_chapters(path, extract)
+        self.assertTrue(os.path.isdir(chapters[0][2]))
+        self.assertTrue(chapters[0][2].startswith(extract))
 
     def test_epub_viewer(self):
         from sphaera_commander.viewer import FileViewerDialog

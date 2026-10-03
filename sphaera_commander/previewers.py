@@ -34,9 +34,9 @@ DOC_KINDS = {
     ".epub": "epub",
 }
 
-XLSX_MAX_ROWS = 5000
-XLSX_MAX_COLS = 64
-GRID_MAX_ROWS = 20000
+XLSX_MAX_ROWS = 1_000_000
+XLSX_MAX_COLS = 256
+GRID_BATCH = 5000
 CSV_DELIMS = ",;\t|"
 
 
@@ -194,24 +194,67 @@ def docx_to_html(path: str) -> str:
 
 # ---------------------------------------------------------------- xlsx
 
+def xlsx_sheet_names(path: str) -> list[str]:
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, read_only=True)
+    try:
+        return list(wb.sheetnames)
+    finally:
+        wb.close()
+
+
 def xlsx_sheets(path: str) -> list[tuple[str, list[list[str]]]]:
+    """Все листы целиком (строки-списки строк). Для больших файлов лучше
+    xlsx_rows_iter + фоновая загрузка."""
     from openpyxl import load_workbook
 
     wb = load_workbook(path, data_only=True, read_only=True)
     try:
         sheets = []
         for name in wb.sheetnames:
-            ws = wb[name]
-            rows: list[list[str]] = []
-            for row in ws.iter_rows(values_only=True):
-                if len(rows) >= XLSX_MAX_ROWS:
-                    break
-                rows.append(["" if v is None else str(v)
-                             for v in row[:XLSX_MAX_COLS]])
+            rows = [list(r) for r in xlsx_rows_iter(path, name)]
             sheets.append((name, rows))
         return sheets
     finally:
         wb.close()
+
+
+def xlsx_rows_iter(path: str, sheet_name: str):
+    """Итератор строк листа (списки строк); для фоновой загрузки большими
+    листами — модель получает данные порциями, GUI не блокируется."""
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path, data_only=True, read_only=True)
+    try:
+        ws = wb[sheet_name]
+        for row in ws.iter_rows(values_only=True):
+            values = ["" if v is None else str(v) for v in row[:XLSX_MAX_COLS]]
+            while values and values[-1] == "":
+                values.pop()  # хвостовые пустые ячейки не храним
+            yield values
+    finally:
+        wb.close()
+
+
+def csv_rows_iter(text: str, delimiter: str):
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+    count = 0
+    for row in reader:
+        if count >= XLSX_MAX_ROWS:
+            return
+        count += 1
+        yield row
+
+
+def csv_sniff_delimiter(text: str) -> str:
+    head = "\n".join(text.splitlines()[:10])
+    best, best_score = ",", -1
+    for d in CSV_DELIMS:
+        score = head.count(d)
+        if score > best_score:
+            best, best_score = d, score
+    return best if best_score > 0 else ","
 
 
 # ---------------------------------------------------------------- pptx
@@ -238,24 +281,154 @@ def pptx_slides(path: str) -> list[tuple[int, str]]:
     return slides
 
 
+# Цвета темы Office по умолчанию — для фигур без явного RGB
+THEME_RGB = {
+    "dk1": 0x000000, "lt1": 0xFFFFFF, "dk2": 0x44546A, "lt2": 0xE7E6E6,
+    "accent1": 0x4472C4, "accent2": 0xED7D31, "accent3": 0xA5A5A5,
+    "accent4": 0xFFC000, "accent5": 0x5B9BD5, "accent6": 0x70AD47,
+    "hlink": 0x0563C1, "folHlink": 0x954F72, "phClr": 0x000000,
+    "tx1": 0x000000, "bg1": 0xFFFFFF, "tx2": 0x44546A, "bg2": 0xE7E6E6,
+}
+
+
+def _color_rgb(color) -> int | None:
+    """RGB цвета python-pptx; темы маппятся на палитру Office."""
+    try:
+        from pptx.enum.dml import MSO_COLOR_TYPE
+
+        if color.type == MSO_COLOR_TYPE.RGB:
+            return int(str(color.rgb), 16)
+        if color.type == MSO_COLOR_TYPE.SCHEME:
+            return THEME_RGB.get(str(color.theme_color).rsplit("(", 1)[0]
+                                 .strip().lower(), None)
+    except Exception:
+        pass
+    return None
+
+
+def _fill_rgb(fill) -> int | None:
+    try:
+        from pptx.enum.dml import MSO_FILL
+
+        if fill.type == MSO_FILL.SOLID:
+            return _color_rgb(fill.fore_color)
+    except Exception:
+        pass
+    return None
+
+
+def _para_html(paragraph) -> str:
+    from pptx.util import Pt
+
+    runs = []
+    for run in paragraph.runs:
+        font = run.font
+        size = font.size.pt if font.size else None
+        bold = " font-weight:bold;" if font.bold else ""
+        italic = " font-style:italic;" if font.italic else ""
+        color = ""
+        rgb = _color_rgb(font.color)
+        if rgb is not None:
+            color = f" color:#{rgb:06x};"
+        family = f" font-family:'{font.name}';" if font.name else ""
+        size_style = f" font-size:{size:.0f}pt;" if size else ""
+        text = escape(run.text).replace("\v", "<br>")
+        runs.append(f"<span style=\"{size_style}{bold}{italic}{color}{family}\">{text}</span>")
+    align = {1: "center", 2: "right", 3: "justify"}.get(
+        int(paragraph.alignment) if paragraph.alignment is not None else 0, "left")
+    level = min(int(paragraph.level or 0), 5)
+    html = "".join(runs) or "&nbsp;"
+    return (f"<p align=\"{align}\" style=\"margin:2 0 2 "
+            f"{level * 18}px;\">{html}</p>")
+
+
+def _shape_box(shape, images_dir: str | None, prefix: str) -> dict:
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    box = {"x": int(shape.left or 0), "y": int(shape.top or 0),
+           "w": int(shape.width or 0), "h": int(shape.height or 0),
+           "kind": "rect", "fill": None, "line": None, "img": None,
+           "html": "", "anchor": "top", "table": None}
+    try:
+        from pptx.enum.shapes import MSO_SHAPE
+
+        if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+            box["kind"] = "picture"
+            if images_dir is not None:
+                image = shape.image
+                img_path = os.path.join(images_dir, f"{prefix}.{image.ext}")
+                with open(img_path, "wb") as f:
+                    f.write(image.blob)
+                box["img"] = img_path
+            return box
+        if shape.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE:
+            name = str(getattr(shape, "auto_shape_type", "")).upper()
+            if "OVAL" in name or "ELLIPSE" in name or "CIRCLE" in name:
+                box["kind"] = "ellipse"
+    except Exception:
+        pass
+    box["fill"] = _fill_rgb(shape.fill)
+    try:
+        line_rgb = _fill_rgb(shape.line.fill)
+        box["line"] = line_rgb
+    except Exception:
+        box["line"] = None
+    try:
+        if shape.has_table:
+            box["kind"] = "table"
+            box["table"] = [[cell.text for cell in row.cells]
+                            for row in shape.table.rows]
+            return box
+    except Exception:
+        pass
+    try:
+        if shape.has_text_frame:
+            from pptx.enum.text import MSO_VERTICAL_ANCHOR
+
+            tf = shape.text_frame
+            anchor = {MSO_VERTICAL_ANCHOR.MIDDLE: "middle",
+                      MSO_VERTICAL_ANCHOR.BOTTOM: "bottom"}.get(
+                          tf.vertical_anchor, "top")
+            box["anchor"] = anchor
+            box["html"] = "".join(_para_html(p) for p in tf.paragraphs)
+    except Exception:
+        pass
+    return box
+
+
+def pptx_slides_rich(path: str, images_dir: str | None = None) -> dict:
+    """Геометрия слайдов для собственного рендера (без LibreOffice).
+
+    Поддерживается: сплошной фон, прямоугольники/овалы с заливкой и рамкой,
+    картинки, таблицы (упрощённо), текст с кеглем/цветом/выравниванием
+    и переносом. Градиенты, тени, SmartArt, диаграммы упрощаются.
+    """
+    from pptx import Presentation
+
+    prs = Presentation(path)
+    deck = {"width": int(prs.slide_width), "height": int(prs.slide_height),
+            "slides": []}
+    for i, slide in enumerate(prs.slides):
+        bg = None
+        try:
+            bg = _fill_rgb(slide.background.fill)
+        except Exception:
+            bg = None
+        deck["slides"].append({
+            "bg": bg,
+            "shapes": [_shape_box(shape, images_dir, f"slide{i + 1}_{j}")
+                       for j, shape in enumerate(slide.shapes)],
+        })
+    return deck
+
+
 # ---------------------------------------------------------------- csv
 
 def csv_grid(text: str) -> tuple[str, list[list[str]]]:
-    """Определить разделитель и разобрать; (разделитель, строки)."""
-    head = "\n".join(text.splitlines()[:10])
-    best, best_score = ",", -1
-    for d in CSV_DELIMS:
-        score = head.count(d)
-        if score > best_score:
-            best, best_score = d, score
-    if best_score <= 0:
-        best = ","
-    rows = []
-    for row in csv.reader(io.StringIO(text), delimiter=best):
-        if len(rows) >= GRID_MAX_ROWS:
-            break
-        rows.append(row)
-    return best, rows
+    """Определить разделитель и разобать; (разделитель, строки)."""
+    delim = csv_sniff_delimiter(text)
+    rows = list(csv_rows_iter(text, delim))
+    return delim, rows
 
 
 # ---------------------------------------------------------------- fb2
@@ -315,8 +488,13 @@ def _fb2_inline(node) -> str:
 
 # ---------------------------------------------------------------- epub
 
-def epub_chapters(path: str) -> list[tuple[str, str]]:
-    """Список глав по spine: (заголовок, исходный xhtml)."""
+def epub_chapters(path: str, extract_to: str | None = None) -> list[tuple[str, str, str | None]]:
+    """Главы по spine: (заголовок, исходный xhtml, базовый каталог).
+
+    Если extract_to задан — архив распаковывается туда и base — реальный
+    каталог главы: относительные <img> и ссылки разрешаются при рендере
+    (QTextBrowser с baseUrl). Иначе base=None (только текст/разметка).
+    """
     with zipfile.ZipFile(path) as zf:
         container = ET.fromstring(zf.read("META-INF/container.xml"))
         rootfile = next(el for el in container.iter()
@@ -333,6 +511,15 @@ def epub_chapters(path: str) -> list[tuple[str, str]]:
         spine = [el.attrib["idref"] for el in opf.iter()
                  if _local(el.tag) == "itemref"]
 
+        if extract_to is not None:
+            zf.extractall(extract_to)
+
+        def real_base(href: str) -> str | None:
+            if extract_to is None:
+                return None
+            full = os.path.normpath(os.path.join(extract_to, base, os.path.dirname(href)))
+            return full if os.path.isdir(full) else extract_to
+
         chapters = []
         for idref in spine:
             href, media = manifest.get(idref, ("", ""))
@@ -345,7 +532,7 @@ def epub_chapters(path: str) -> list[tuple[str, str]]:
                 continue
             xhtml = raw.decode("utf-8", errors="replace")
             title = _html_title(xhtml) or f"Глава {len(chapters) + 1}"
-            chapters.append((title, xhtml))
+            chapters.append((title, xhtml, real_base(href)))
         return chapters
 
 
