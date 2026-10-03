@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtCore import QBuffer, QModelIndex, Qt, QUrl  # noqa: E402
 from PySide6.QtGui import QPixmap  # noqa: E402
+from PySide6.QtGui import QPalette  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from sphaera_commander import mounts, thumbnails  # noqa: E402
@@ -236,6 +237,48 @@ class MountsTests(unittest.TestCase):
             ok, message = mounts.mount("/dev/sdX")
         self.assertFalse(ok)
         self.assertIn("udisksctl", message)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class BrandThemeTests(unittest.TestCase):
+    """Фирменная тема Iustitia: применение и откат."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_apply_and_revert(self):
+        from sphaera_commander import theme
+
+        default = self.app.style().standardPalette()
+        base_before = self.app.palette().color(
+            QPalette.ColorRole.Window).name()
+        theme.apply_brand_theme(self.app)
+        window = self.app.palette().color(QPalette.ColorRole.Window).name()
+        self.assertEqual(window, theme.GRAPHITE_925)
+        self.assertEqual(
+            self.app.palette().color(QPalette.ColorRole.Highlight).name(),
+            theme.TEAL)
+        self.assertIn("QMenuBar", self.app.styleSheet())
+        theme.revert_theme(self.app)
+        self.assertEqual(self.app.styleSheet(), "")
+        # палитра вернулась к системной (может совпадать с исходной — тогда
+        # сравниваем с системной, а не с сохранённой до применения)
+        self.assertEqual(
+            self.app.palette().color(QPalette.ColorRole.Window).name(),
+            default.color(QPalette.ColorRole.Window).name())
+        _ = base_before
+
+    def test_brand_constants_match_identity(self):
+        from sphaera_commander import theme
+
+        self.assertEqual(theme.TEAL, "#2f8f8b")
+        self.assertEqual(theme.BRONZE, "#a6784f")
+        self.assertEqual(theme.PARCHMENT, "#f4efe6")
+        self.assertEqual(theme.GRAPHITE_950, "#090b0c")
 
 
 if __name__ == "__main__":

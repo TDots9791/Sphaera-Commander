@@ -444,8 +444,9 @@ class FilePanel(QWidget):
         self.view.viewport().update()
 
     def set_active(self, active: bool) -> None:
+        # тиловый акцент активной панели — фирменный цвет Iustitia
         self.path_combo.setStyleSheet(
-            "QComboBox { font-weight: bold; }" if active else "")
+            "QComboBox { font-weight: bold; color: #2f8f8b; }" if active else "")
         font = self.status_label.font()
         font.setBold(active)
         self.status_label.setFont(font)

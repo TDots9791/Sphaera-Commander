@@ -252,6 +252,10 @@ class MainWindow(QMainWindow):
                               lambda: self.toggle_thumbnails(), checkable=True)
         self.act_thumbs.setChecked(config.qsettings().value(
             "view/thumbnails", "false") in (True, "true", "1"))
+        self.act_brand = act("Фирменная тёмная тема", None,
+                             lambda: self.toggle_brand_theme(), checkable=True)
+        self.act_brand.setChecked(config.qsettings().value(
+            "view/brand_theme", "true") in (True, "true", "1"))
         self.act_hidden = act("Скрытые файлы", "Ctrl+H",
                               lambda: self.toggle_hidden(), checkable=True)
         self.act_hidden.setChecked(self.show_hidden)
@@ -290,6 +294,7 @@ class MainWindow(QMainWindow):
         m_view.addAction(self.act_hidden)
         m_view.addAction(self.act_quick)
         m_view.addAction(self.act_thumbs)
+        m_view.addAction(self.act_brand)
         m_view.addAction(self._find_action("Обновить"))
         m_view.addAction(self.act_fullscreen)
         m_sort = m_view.addMenu("Сортировка")
@@ -324,6 +329,19 @@ class MainWindow(QMainWindow):
             self.toggle_thumbnails()
         self.left.wait_loaded()
         self.right.wait_loaded()
+
+    def toggle_brand_theme(self):
+        from . import theme
+
+        on = self.act_brand.isChecked()
+        config.qsettings().setValue("view/brand_theme", on)
+        app = QApplication.instance()
+        if on:
+            theme.apply_brand_theme(app)
+        else:
+            theme.revert_theme(app)
+        self._status("Фирменная тёмная тема: "
+                     + ("включена" if on else "выключена (системная)"))
 
     def toggle_thumbnails(self):
         on = self.act_thumbs.isChecked()
@@ -492,13 +510,29 @@ class MainWindow(QMainWindow):
         panel.refresh()
 
     def _about(self):
-        QMessageBox.about(
-            self, "О программе",
-            f"<b>Sphaera Commander</b> {__version__}<br><br>"
-            "Двухпанельный файловый менеджер для Linux в духе Total Commander.<br>"
-            "Tab — смена панели, F5/F6 — копирование/перенос, F3/F4 — просмотр/правка, "
-            "Alt+F5/Alt+F6 — запаковать/распаковать, Ctrl+M — групповое переименование, "
-            "Shift+F2 — сравнить каталоги.")
+        from pathlib import Path
+
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QPixmap
+
+        box = QMessageBox(self)
+        box.setWindowTitle("О программе")
+        logo = Path(__file__).parent / "assets" / "logo.png"
+        if logo.exists():
+            pixmap = QPixmap(str(logo)).scaled(
+                96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            box.setIconPixmap(pixmap)
+        box.setText(
+            "<span style=\"font-family:'PT Serif', Georgia, serif; "
+            "font-size:15pt;\">Sphaera Commander</span><br>"
+            f"<span style='color:#c6baa6;'>версия {__version__}</span>")
+        box.setInformativeText(
+            "Двухпанельный файловый менеджер для Linux в духе Total Commander.<br><br>"
+            "Tab — панели, F5/F6 — копирование/перенос, F3/F4 — просмотр/правка,<br>"
+            "Alt+F7 — поиск, Ctrl+Q — быстрый просмотр, F8 — корзина.<br><br>"
+            "<span style='color:#5fbab4;'>Айдентика — Iustitia:</span> "
+            "графит · пергамент · бирюза · бронза.")
+        box.exec()
 
     def _context_menu(self, panel: FilePanel, pos) -> None:
         self._set_active(panel)
@@ -1055,8 +1089,11 @@ def _app_icon():
 
     from PySide6.QtGui import QIcon
 
-    path = Path(__file__).parent / "assets" / "icon.svg"
-    return QIcon(str(path)) if path.exists() else QIcon()
+    base = Path(__file__).parent / "assets"
+    for name in ("icon-256.png", "icon-128.png", "icon.svg"):
+        if (base / name).exists():
+            return QIcon(str(base / name))
+    return QIcon()
 
 
 def _selfcheck() -> int:
@@ -1096,6 +1133,10 @@ def main(argv=None):
     app.setOrganizationName("Sphaera")
     app.setDesktopFileName("sphaera-commander")
     app.setWindowIcon(_app_icon())
+    if config.qsettings().value("view/brand_theme", "true") in (True, "true", "1"):
+        from . import theme
+
+        theme.apply_brand_theme(app)
     win = MainWindow()
     for panel, path in ((win.left, ns.paths[0] if ns.paths else None),
                         (win.right, ns.paths[1] if len(ns.paths) > 1 else None)):
