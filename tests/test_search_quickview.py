@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -191,6 +192,81 @@ class QuickViewTests(unittest.TestCase):
             if needle in w.quick_preview._browser.toPlainText():
                 return
         raise AssertionError(f"предпросмотр не показал {needle!r}")
+
+
+class QuickViewLegacyTests(unittest.TestCase):
+    """Ctrl+Q: doc и rtf показывают текст, а не «бинарный файл»."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sc_qv_doc_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _entry(self, name: str):
+        from sphaera_commander.fsmodel import FileEntry
+
+        path = os.path.join(self.tmp, name)
+        stt = os.stat(path)
+        return FileEntry(name=name, path=path, is_dir=False, is_link=False,
+                         size=stt.st_size, mtime=stt.st_mtime, mode=stt.st_mode)
+
+    def _load(self, name: str):
+        from sphaera_commander.quick_preview import QuickPreview
+
+        qp = QuickPreview()
+        qp.show_entry(self._entry(name))
+        qp._debounce.stop()
+        qp._load_pending()  # тот же вход, что у таймера дебаунса
+        return qp
+
+    def test_doc_shows_extracted_text(self):
+        path = os.path.join(self.tmp, "real.doc")
+        with open(path, "wb") as f:
+            f.write(b"\xd0\xcf\x11\xe0garbage")
+
+        def fake_run(cmd, **_kw):
+            self.assertTrue(cmd[0].endswith("antiword"))
+            return unittest.mock.MagicMock(returncode=0,
+                                           stdout="Текст из Word")
+
+        from sphaera_commander import legacy_formats as lf
+        with unittest.mock.patch.object(lf.shutil, "which",
+                                        return_value="/usr/bin/antiword"):
+            with unittest.mock.patch.object(lf.subprocess, "run", fake_run):
+                qp = self._load("real.doc")
+        self.assertEqual(qp._stack.currentIndex(), 1)
+        self.assertIn("Текст из Word", qp._browser.toPlainText())
+        self.assertIn("• doc •", qp._info.text())
+
+    def test_doc_saved_as_rtf_shows_text(self):
+        path = os.path.join(self.tmp, "doc.doc")
+        with open(path, "w", encoding="ascii") as f:
+            f.write(r"{\rtf1\ansi \u1055?\u1088?\u1080?\u1074?\u1077?\u1090?\par}")
+        qp = self._load("doc.doc")
+        self.assertIn("Привет", qp._browser.toPlainText())
+        self.assertIn("• doc •", qp._info.text())
+
+    def test_rtf_shows_text(self):
+        path = os.path.join(self.tmp, "doc.rtf")
+        with open(path, "w", encoding="ascii") as f:
+            f.write(r"{\rtf1\ansi \u1042?\u1072?\u1078?\u1085?\u1086?\par}")
+        qp = self._load("doc.rtf")
+        self.assertIn("Важно", qp._browser.toPlainText())
+        self.assertIn("• rtf •", qp._info.text())
+
+    def test_binary_doc_without_tool_shows_error_page(self):
+        path = os.path.join(self.tmp, "real.doc")
+        with open(path, "wb") as f:
+            f.write(b"\xd0\xcf\x11\xe0garbage")
+        from sphaera_commander import legacy_formats as lf
+        with unittest.mock.patch.object(lf.shutil, "which", return_value=None):
+            qp = self._load("real.doc")
+        self.assertIn("Не удалось показать", qp._page_info.text())
 
 
 if __name__ == "__main__":

@@ -2,8 +2,9 @@
 файла под курсором активной панели — как Quick View в Total Commander.
 
 Поддержка: текст (с кодировками), md (рендер), html, pdf (первая страница),
-docx (HTML), pptx (первый слайд своим рендером), fb2, epub (глава 1),
-картинки; остальное — сведения о файле и подсказка про F3.
+docx (HTML), doc/rtf (текст через antiword/striprtf), pptx (первый слайд
+своим рендером), fb2, epub (глава 1), картинки; остальное — сведения о файле
+и подсказка про F3.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import legacy_formats as lf
 from . import previewers as pv
 from . import slide_render
 from .fsmodel import FileEntry, human_size
@@ -110,6 +112,14 @@ class QuickPreview(QWidget):
             self._set_html(pv.docx_to_html(path))
             self._info.setText(f"{entry.name} • docx • {human_size(entry.size)} • F3/F4")
             return
+        if kind == "doc":
+            self._set_text(lf.doc_to_text(path))
+            self._info.setText(f"{entry.name} • doc • {human_size(entry.size)} • F3/F4")
+            return
+        if kind == "rtf":
+            self._set_text(lf.rtf_to_text(path))
+            self._info.setText(f"{entry.name} • rtf • {human_size(entry.size)} • F3/F4")
+            return
         if kind == "pptx":
             images_dir = os.path.join(tempfile.gettempdir(), "sphaera-preview")
             os.makedirs(images_dir, exist_ok=True)
@@ -165,6 +175,10 @@ class QuickPreview(QWidget):
 
     def _set_html(self, html: str) -> None:
         self._browser.setHtml(html)
+        self._stack.setCurrentIndex(1)
+
+    def _set_text(self, text: str) -> None:
+        self._browser.setPlainText(text)
         self._stack.setCurrentIndex(1)
 
     def _show_image(self, img: QImage) -> None:

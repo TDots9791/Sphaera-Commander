@@ -7,3 +7,4 @@ dist/
 sphaera-commander.spec
 .coverage
 htmlcov/
+.sphaera/
