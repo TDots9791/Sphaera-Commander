@@ -584,13 +584,17 @@ class FullscreenTests(QtTestCase):
     def test_toggle_fullscreen_and_exit(self):
         w = self.win
         self.assertFalse(w.isFullScreen())
+        self.assertTrue(w._corner_close.isHidden())
         w.toggle_fullscreen()
         self.assertTrue(w.isFullScreen())
-        self.assertTrue(w.menuBar().isHidden())
+        # меню остаётся видимым, закрывать можно угловым крестиком
+        self.assertFalse(w.menuBar().isHidden())
+        self.assertFalse(w._corner_close.isHidden())
         self.assertTrue(w.act_fullscreen.isChecked())
         w.toggle_fullscreen()
         self.assertFalse(w.isFullScreen())
         self.assertFalse(w.menuBar().isHidden())
+        self.assertTrue(w._corner_close.isHidden())
         self.assertFalse(w.act_fullscreen.isChecked())
 
     def test_escape_exits_fullscreen_only(self):

@@ -268,6 +268,34 @@ class QuickViewLegacyTests(unittest.TestCase):
             qp = self._load("real.doc")
         self.assertIn("Не удалось показать", qp._page_info.text())
 
+    def test_doc_monospace_and_reset_for_next_file(self):
+        """Таблицы antiword сходятся только в моноширинном шрифте;
+        следующий файл после DOC получает обычный пропорциональный."""
+        from PySide6.QtGui import QFontDatabase
+
+        path = os.path.join(self.tmp, "real.doc")
+        with open(path, "wb") as f:
+            f.write(b"\xd0\xcf\x11\xe0garbage")
+
+        def fake_run(cmd, **_kw):
+            return unittest.mock.MagicMock(returncode=0, stdout="Текст")
+
+        from sphaera_commander import legacy_formats as lf
+        with unittest.mock.patch.object(lf.shutil, "which",
+                                        return_value="/usr/bin/antiword"):
+            with unittest.mock.patch.object(lf.subprocess, "run", fake_run):
+                qp = self._load("real.doc")
+        fixed = QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+        self.assertEqual(qp._browser.document().defaultFont().family(), fixed)
+
+        txt = os.path.join(self.tmp, "заметка.txt")
+        with open(txt, "w", encoding="utf-8") as f:
+            f.write("обычный текст\n")
+        qp.show_entry(self._entry("заметка.txt"))
+        qp._load_pending()
+        self.assertEqual(qp._stack.currentIndex(), 1)
+        self.assertNotEqual(qp._browser.document().defaultFont().family(), fixed)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -227,6 +227,7 @@ class MainWindow(QMainWindow):
 
         self._make_actions()
         self._make_menu()
+        self._make_corner_close()
         self._restore_panels()
         self._set_active(self.left)
         self.left.view.installEventFilter(self)
@@ -344,6 +345,19 @@ class MainWindow(QMainWindow):
         about = QAction("О программе", self)
         about.triggered.connect(self._about)
         m_help.addAction(about)
+
+    def _make_corner_close(self):
+        """Крестик в строке меню: в полноэкранном рамки окна нет
+        (GNOME показывает её без кнопок), закрывать должно приложение."""
+        from PySide6.QtWidgets import QToolButton
+
+        self._corner_close = QToolButton(self.menuBar())
+        self._corner_close.setText("✕")
+        self._corner_close.setToolTip("Закрыть приложение")
+        self._corner_close.setAutoRaise(True)
+        self._corner_close.clicked.connect(self.close)
+        self._corner_close.hide()  # виден только в полноэкранном режиме
+        self.menuBar().setCornerWidget(self._corner_close, Qt.TopRightCorner)
 
     def _find_action(self, title: str) -> QAction:
         for a in self.findChildren(QAction):
@@ -473,10 +487,13 @@ class MainWindow(QMainWindow):
         if self.isFullScreen():
             self.showNormal()
             self.menuBar().show()
+            self._corner_close.hide()
             self.act_fullscreen.setChecked(False)
         else:
             self.showFullScreen()
-            self.menuBar().hide()  # выход: F11 или Esc
+            # меню не прячем: выход F11/Esc, крестик — в углу меню
+            self.menuBar().show()
+            self._corner_close.show()
             self.act_fullscreen.setChecked(True)
 
     def _exit_fullscreen(self):

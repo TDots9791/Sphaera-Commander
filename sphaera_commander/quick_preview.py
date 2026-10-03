@@ -14,7 +14,7 @@ import tempfile
 from html import escape
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QFont, QImage, QPixmap, QFontDatabase
 from PySide6.QtWidgets import (
     QLabel,
     QScrollArea,
@@ -99,6 +99,9 @@ class QuickPreview(QWidget):
         path = entry.path
         ext = os.path.splitext(path)[1].lower()
         kind = pv.document_kind(path)
+        # каждая загрузка начинает с чистого (пропорционального) шрифта:
+        # моноширинный после DOC не должен жить в docx/html/epub
+        self._browser.document().setDefaultFont(QFont())
 
         if kind == "pdf":
             count = pv.pdf_page_count(path)
@@ -113,6 +116,10 @@ class QuickPreview(QWidget):
             self._info.setText(f"{entry.name} • docx • {human_size(entry.size)} • F3/F4")
             return
         if kind == "doc":
+            # antiword рисует таблицы позиционно (| по колонкам) —
+            # выравнивание сходится только в моноширинном шрифте
+            self._browser.document().setDefaultFont(
+                QFontDatabase.systemFont(QFontDatabase.FixedFont))
             self._set_text(lf.doc_to_text(path))
             self._info.setText(f"{entry.name} • doc • {human_size(entry.size)} • F3/F4")
             return
