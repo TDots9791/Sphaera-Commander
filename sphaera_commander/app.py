@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QWidget,
     QHBoxLayout,
     QVBoxLayout,
@@ -54,6 +55,8 @@ from .ops import (
 )
 from .panel import FilePanel
 from . import previewers as pv
+from .dialogs import SearchDialog
+from .quick_preview import QuickPreview
 from .viewer import looks_binary, open_viewer
 
 
@@ -125,10 +128,23 @@ class MainWindow(QMainWindow):
         self.left = FilePanel()
         self.right = FilePanel()
         self.active: FilePanel = self.left
+        self.quick_view = config.qsettings().value(
+            "view/quick_view", "false") in (True, "true", "1")
+
+        # быстрый просмотр: на неактивной стороне показывается содержимое
+        # (по экземпляру на сторону — виджет не может жить в двух стеках)
+        self.quick_left = QuickPreview()
+        self.quick_right = QuickPreview()
+        self.left_stack = QStackedWidget()
+        self.left_stack.addWidget(self.left)
+        self.left_stack.addWidget(self.quick_left)
+        self.right_stack = QStackedWidget()
+        self.right_stack.addWidget(self.right)
+        self.right_stack.addWidget(self.quick_right)
 
         self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.addWidget(self.left)
-        self.splitter.addWidget(self.right)
+        self.splitter.addWidget(self.left_stack)
+        self.splitter.addWidget(self.right_stack)
         self.splitter.setChildrenCollapsible(False)
 
         self.cmdline = CommandLine(config.load_cmd_history())
@@ -189,6 +205,11 @@ class MainWindow(QMainWindow):
             lambda pos, p=self.right: self._context_menu(p, pos))
         self.left.entry_activated.connect(self._open_entry)
         self.right.entry_activated.connect(self._open_entry)
+        self.left.cursor_changed.connect(
+            lambda e, p=self.left: self._on_panel_cursor(p, e))
+        self.right.cursor_changed.connect(
+            lambda e, p=self.right: self._on_panel_cursor(p, e))
+        self._update_quick_view_visibility()
         self.left.path_changed.connect(lambda _p: self._update_title())
         self.right.path_changed.connect(lambda _p: self._update_title())
         self._update_title()
@@ -215,6 +236,7 @@ class MainWindow(QMainWindow):
         act("Удалить безвозвратно", "Shift+F8", self.do_delete_permanent)
         act("Переименовать", "Shift+F6", self.do_rename)
         act("Групповое переименование…", "Ctrl+M", self.do_batch_rename)
+        act("Поиск файлов…", "Alt+F7", self.do_search)
         act("Запаковать…", "Alt+F5", self.do_pack)
         act("Распаковать…", "Alt+F6", self.do_unpack)
         act("Сравнить каталоги", "Shift+F2", self.compare_dirs)
@@ -224,10 +246,13 @@ class MainWindow(QMainWindow):
                               lambda: self.toggle_hidden(), checkable=True)
         self.act_hidden.setChecked(self.show_hidden)
         act("Поменять панели местами", "Ctrl+U", self.swap_panels)
+        self.act_quick = act("Быстрый просмотр (вторая панель)", "Ctrl+Q",
+                             self.toggle_quick_view, checkable=True)
+        self.act_quick.setChecked(self.quick_view)
         self.act_fullscreen = act("Полноэкранный режим", "F11",
                                   self.toggle_fullscreen, checkable=True)
         act("Выйти из полноэкранного режима", "Escape", self._exit_fullscreen)
-        act("Выход", "Ctrl+Q", self.close)
+        act("Выход", "F10", self.close)
         act("Сортировка: имя", "Ctrl+F3", lambda: self._sort_active(NAME_COL))
         act("Сортировка: дата", "Ctrl+F5", lambda: self._sort_active(MTIME_COL))
         act("Сортировка: размер", "Ctrl+F6", lambda: self._sort_active(SIZE_COL))
@@ -242,7 +267,8 @@ class MainWindow(QMainWindow):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
         for title in ("Копирование", "Перенос", "Новая папка", "Удаление (в корзину)",
-                      "Удалить безвозвратно", "Переименовать", "Групповое переименование…"):
+                      "Удалить безвозвратно", "Переименовать",
+                      "Групповое переименование…", "Поиск файлов…"):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
         for title in ("Запаковать…", "Распаковать…"):
@@ -252,6 +278,7 @@ class MainWindow(QMainWindow):
 
         m_view = self.menuBar().addMenu("&Вид")
         m_view.addAction(self.act_hidden)
+        m_view.addAction(self.act_quick)
         m_view.addAction(self._find_action("Обновить"))
         m_view.addAction(self.act_fullscreen)
         m_sort = m_view.addMenu("Сортировка")
@@ -296,7 +323,56 @@ class MainWindow(QMainWindow):
         self.active = panel
         self.left.set_active(panel is self.left)
         self.right.set_active(panel is self.right)
+        self._update_quick_view_visibility()
+        self._update_quick_preview()
         self._update_title()
+
+    # ------------------------------------------------------------- быстрый просмотр
+
+    def _inactive_preview(self) -> QuickPreview:
+        return self.quick_right if self.active is self.left else self.quick_left
+
+    @property
+    def quick_preview(self) -> QuickPreview:
+        """Активный предпросмотр (на неактивной стороне) — для тестов и статуса."""
+        return self._inactive_preview()
+
+    def toggle_quick_view(self):
+        self.quick_view = not self.quick_view
+        self.act_quick.setChecked(self.quick_view)
+        config.qsettings().setValue("view/quick_view", self.quick_view)
+        self._update_quick_view_visibility()
+        self._update_quick_preview()
+
+    def _update_quick_view_visibility(self) -> None:
+        if not self.quick_view:
+            self.left_stack.setCurrentWidget(self.left)
+            self.right_stack.setCurrentWidget(self.right)
+            return
+        self.left_stack.setCurrentWidget(
+            self.left if self.active is self.left else self.quick_left)
+        self.right_stack.setCurrentWidget(
+            self.quick_right if self.active is self.left else self.right)
+
+    def _on_panel_cursor(self, panel: FilePanel, entry) -> None:
+        if self.quick_view and panel is self.active:
+            self._inactive_preview().show_entry(entry)
+
+    def _update_quick_preview(self) -> None:
+        if self.quick_view:
+            self._inactive_preview().show_entry(self.active.current_entry())
+
+    def do_search(self):
+        dlg = SearchDialog(self, self.active.current_path())
+        dlg.attach()
+        dlg.openRequested.connect(self._open_search_hit)
+        self._search_dialog = dlg  # держим ссылку, окно немодальное
+        dlg.show()
+        dlg.raise_()
+
+    def _open_search_hit(self, path: str, line: int) -> None:
+        open_viewer(self, path, [path], editable=False,
+                    goto_line=line if line > 0 else 0).exec()
 
     def _other(self) -> FilePanel:
         return self.right if self.active is self.left else self.left

@@ -4,14 +4,16 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QDialog,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -20,6 +22,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
 )
 
@@ -292,3 +296,138 @@ def show_op_result(parent, result: OpResult) -> None:
         QMessageBox.information(parent, "Операция",
                                 f"Операция прервана.\nУспешно: {result.done_files}, "
                                 f"пропущено: {result.skipped}.")
+
+
+class SearchDialog(QDialog):
+    """Поиск файлов по маске и содержимому (Alt+F7); окно живёт, пока ищет.
+
+    Результаты — двойной клик/Enter → openRequested(путь, строка).
+    """
+
+    openRequested = Signal(str, int)
+    hitArrived = Signal(object)    # searcher.Hit (из рабочего потока)
+    statusChanged = Signal(str)
+    searchDone = Signal()
+    MAX_ROWS = 5000
+
+    def __init__(self, parent, root_dir: str):
+        super().__init__(parent)
+        self.setWindowTitle("Поиск файлов")
+        self.setModal(False)
+        self.resize(860, 560)
+        self.root_dir = root_dir
+        self._thread: threading.Thread | None = None
+        self._cancel = threading.Event()
+
+        self.edit_root = QLineEdit(root_dir)
+        self.edit_mask = QLineEdit("*")
+        self.edit_mask.setToolTip("Маски через пробел или ;:  *.py  *.txt;README*")
+        self.edit_text = QLineEdit()
+        self.edit_text.setPlaceholderText("пусто — искать только по маске")
+        self.chk_recursive = QPushButton("Рекурсивно")
+        self.chk_recursive.setCheckable(True)
+        self.chk_recursive.setChecked(True)
+        self.chk_case = QPushButton("Учитывать регистр")
+        self.chk_case.setCheckable(True)
+        self.chk_regex = QPushButton("Рег. выражение")
+        self.chk_regex.setCheckable(True)
+
+        self.btn_start = QPushButton("Найти")
+        self.btn_start.setDefault(True)
+        self.btn_start.clicked.connect(self.start_search)
+        self.btn_stop = QPushButton("Стоп")
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self._cancel.set)
+
+        form = QGridLayout()
+        form.addWidget(QLabel("Где:"), 0, 0)
+        form.addWidget(self.edit_root, 0, 1, 1, 3)
+        form.addWidget(QLabel("Маска файлов:"), 1, 0)
+        form.addWidget(self.edit_mask, 1, 1)
+        form.addWidget(QLabel("Текст:"), 2, 0)
+        form.addWidget(self.edit_text, 2, 1)
+        row = QHBoxLayout()
+        row.addWidget(self.chk_recursive)
+        row.addWidget(self.chk_case)
+        row.addWidget(self.chk_regex)
+        row.addStretch(1)
+        row.addWidget(self.btn_stop)
+        row.addWidget(self.btn_start)
+        form.addLayout(row, 2, 2, 1, 2)
+
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(("Файл", "Стр.", "Совпадение"))
+        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tree.header().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.tree.itemActivated.connect(self._emit_open)
+        self.tree.setRootIsDecorated(False)
+
+        self.lbl_status = QLabel(f"Поиск в: {root_dir}")
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(self.tree, 1)
+        layout.addWidget(self.lbl_status)
+
+    def start_search(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        from . import searcher
+
+        self.tree.clear()
+        self._cancel.clear()
+        self.btn_stop.setEnabled(True)
+        self.btn_start.setEnabled(False)
+        masks = self.edit_mask.text()
+        needle = self.edit_text.text()
+        case = self.chk_case.isChecked()
+        regex = self.chk_regex.isChecked()
+        recursive = self.chk_recursive.isChecked()
+        root = self.edit_root.text()
+
+        def worker():
+            stats = searcher.run_search(
+                root, masks, needle, recursive=recursive,
+                case_sensitive=case, use_regex=regex,
+                hit_cb=lambda h: self.hitArrived.emit(h),
+                progress_cb=lambda s: self.statusChanged.emit(s.summary()),
+                is_cancelled=self._cancel.is_set)
+            self.statusChanged.emit(stats.summary())
+            self.searchDone.emit()
+
+        self._thread = threading.Thread(target=worker, daemon=True,
+                                        name="search")
+        self._thread.start()
+
+    def _emit_open(self, item: QTreeWidgetItem, _col: int) -> None:
+        path = item.data(0, Qt.UserRole)
+        if path:
+            self.openRequested.emit(path, int(item.data(1, Qt.UserRole) or 0))
+
+    def attach(self) -> None:
+        """Соединить сигналы рабочего потока со слотами (главный поток)."""
+        self.hitArrived.connect(self._on_hit)
+        self.statusChanged.connect(self.lbl_status.setText)
+        self.searchDone.connect(self._on_done)
+
+    def _on_hit(self, hit) -> None:
+        if self.tree.topLevelItemCount() >= self.MAX_ROWS:
+            return
+        item = QTreeWidgetItem(
+            [os.path.basename(hit.path) if hit.line_no else hit.path,
+             str(hit.line_no) if hit.line_no else "", hit.text])
+        item.setData(0, Qt.UserRole, hit.path)
+        item.setData(1, Qt.UserRole, hit.line_no)
+        item.setToolTip(0, hit.path)
+        self.tree.addTopLevelItem(item)
+
+    def _on_done(self) -> None:
+        self.btn_stop.setEnabled(False)
+        self.btn_start.setEnabled(True)
+        self._thread = None
+
+    def reject(self) -> None:
+        self._cancel.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3)
+        super().reject()

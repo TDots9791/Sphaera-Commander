@@ -108,6 +108,7 @@ class FilePanel(QWidget):
 
     path_changed = Signal(str)
     entry_activated = Signal(object)
+    cursor_changed = Signal(object)  # FileEntry | None — для быстрого просмотра
     loaded = Signal(object)
 
     def __init__(self, parent=None):
@@ -133,6 +134,7 @@ class FilePanel(QWidget):
 
         self.view = FileView()
         self.view.setModel(self.model)
+        self.view.selectionModel().currentRowChanged.connect(self._on_cursor_changed)
         self.view.entry_activated.connect(self._on_entry_activated)
         self.view.doubleClicked.connect(
             lambda idx: self._on_entry_activated(self.model.entry_at(idx.row())))
@@ -303,6 +305,8 @@ class FilePanel(QWidget):
         self._reveal_name = None
         self.model.set_entries(payload["path"], payload["entries"])
         self._restore_cursor(keep)
+        # курсор восстановлен — содержимое под ним могло измениться
+        self.cursor_changed.emit(self.current_entry())
         self._update_combo()
         self._update_completer()
         self.update_status()
@@ -312,6 +316,10 @@ class FilePanel(QWidget):
 
     def _on_dir_changed(self, _path: str) -> None:
         self._refresh_timer.start()
+
+    def _on_cursor_changed(self, current, _previous) -> None:
+        row = current.row()
+        self.cursor_changed.emit(None if row <= 0 else self.model.entry_at(row))
 
     def _on_path_edited(self) -> None:
         self.cd(self.path_combo.lineEdit().text())
