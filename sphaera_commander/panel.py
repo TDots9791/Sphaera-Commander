@@ -8,7 +8,7 @@ import time
 import tarfile
 import zipfile
 
-from PySide6.QtCore import QFileSystemWatcher, QTimer, Qt, Signal
+from PySide6.QtCore import QFileSystemWatcher, QSize, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from .archives import ArchiveBrowser, archive_format, norm_member
+from . import thumbnails
 from .fsmodel import (
     FileEntry,
     FileTableModel,
@@ -33,12 +34,14 @@ from .fsmodel import (
 
 
 class FileView(QTableView):
-    """Таблица с TC-поведением клавиш: Tab, Enter, Insert, +, -, *."""
+    """Таблица с TC-поведением клавиш: Tab, Enter, Insert, +, -, *;
+    перетаскивание файлов из панели и приём drop'ов."""
 
     switch_requested = Signal()
     entry_activated = Signal(object)  # FileEntry | None
     mask_requested = Signal(bool)     # True — отметить по маске, False — снять
     context_requested = Signal(object)  # QPoint
+    drop_requested = Signal(list, str)  # [локальные пути], каталог назначения
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,6 +53,11 @@ class FileView(QTableView):
         self.setWordWrap(False)
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._emit_context)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDefaultDropAction(Qt.CopyAction)
         self.verticalHeader().hide()
         self.verticalHeader().setDefaultSectionSize(22)
         header = self.horizontalHeader()
@@ -60,6 +68,39 @@ class FileView(QTableView):
 
     def _emit_context(self, pos) -> None:
         self.context_requested.emit(pos)
+
+    # -- drag & drop ---------------------------------------------------------
+
+    def _drop_target_dir(self, pos) -> str:
+        index = self.indexAt(pos)
+        entry = self.model().entry_at(index.row()) if index.isValid() else None
+        if entry is not None and entry.is_dir:
+            return entry.path
+        return self.model().path
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if not event.mimeData().hasUrls():
+            super().dropEvent(event)
+            return
+        paths = [u.toLocalFile() for u in event.mimeData().urls()
+                 if u.isLocalFile()]
+        if not paths:
+            return
+        target = self._drop_target_dir(event.position().toPoint())
+        event.acceptProposedAction()
+        self.drop_requested.emit(paths, target)
 
     def _on_header_clicked(self, section: int):
         self.model().apply_sort(section)
@@ -110,6 +151,7 @@ class FilePanel(QWidget):
     entry_activated = Signal(object)
     cursor_changed = Signal(object)  # FileEntry | None — для быстрого просмотра
     loaded = Signal(object)
+    drop_requested = Signal(list, str)  # [пути], каталог назначения
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -138,6 +180,7 @@ class FilePanel(QWidget):
         self.view.entry_activated.connect(self._on_entry_activated)
         self.view.doubleClicked.connect(
             lambda idx: self._on_entry_activated(self.model.entry_at(idx.row())))
+        self.view.drop_requested.connect(self.drop_requested)
 
         self.status_label = QLabel()
 
@@ -159,7 +202,12 @@ class FilePanel(QWidget):
         self.model.dataChanged.connect(lambda *_: self.update_status())
         self.model.modelReset.connect(self._on_model_reset)
         self.loaded.connect(self._on_loaded)
+        thumbnails.store().ready.connect(self._on_thumb_ready)
         self.cd(os.path.expanduser("~"), quiet=True)
+
+    def _on_thumb_ready(self, path: str) -> None:
+        self.model.notify_thumbnail(path)
+        self.view.viewport().update()
 
     # -- навигация ---------------------------------------------------------
 
@@ -384,6 +432,16 @@ class FilePanel(QWidget):
     def set_show_hidden(self, on: bool) -> None:
         self.model.show_hidden = on
         self.refresh()
+
+    def set_thumbnails(self, on: bool) -> None:
+        """Миниатюры картинок: фоновая генерация + кэш; размер иконки 64px."""
+        self.model.set_thumbnails(on, thumbnails.store())
+        self.view.setIconSize(QSize(64, 64) if on else QSize(20, 20))
+        if self.model.entries:
+            self.model.dataChanged.emit(
+                self.model.index(1, 0),
+                self.model.index(len(self.model.entries), 0))
+        self.view.viewport().update()
 
     def set_active(self, active: bool) -> None:
         self.path_combo.setStyleSheet(

@@ -7,9 +7,11 @@ import stat as stat_m
 import time
 from dataclasses import dataclass
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+from PySide6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, QUrl
 from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import QApplication, QStyle
+
+from . import thumbnails
 
 NAME_COL, SIZE_COL, MTIME_COL, MODE_COL = range(4)
 COLUMNS = ("Имя", "Размер", "Изменён", "Права")
@@ -102,6 +104,23 @@ def compare_name_sets(left: dict[str, FileEntry],
     return diff(left, right), diff(right, left)
 
 
+def entry_for(path: str) -> FileEntry | None:
+    """Запись для существующего файла/каталога (для перетаскивания извне)."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return None
+    return FileEntry(
+        name=os.path.basename(path) or path,
+        path=path,
+        is_dir=os.path.isdir(path),
+        is_link=os.path.islink(path),
+        size=0 if os.path.isdir(path) else st.st_size,
+        mtime=st.st_mtime,
+        mode=st.st_mode,
+    )
+
+
 class FileTableModel(QAbstractTableModel):
     """Строки: '..' + записи каталога; отметки и результат сравнения — по имени."""
 
@@ -114,7 +133,23 @@ class FileTableModel(QAbstractTableModel):
         self.sort_desc = False
         self.marked: set[str] = set()
         self.compared: set[str] = set()
+        self.thumbnails_on = False
+        self._thumb_store = None
         self._icons: dict[str, QIcon] = {}
+
+    def set_thumbnails(self, on: bool, store=None) -> None:
+        self.thumbnails_on = on
+        if store is not None:
+            self._thumb_store = store
+
+    def notify_thumbnail(self, path: str) -> None:
+        """Миниатюра готова — обновить строку, если файл в списке."""
+        if not self.thumbnails_on:
+            return
+        for i, e in enumerate(self.entries, start=1):
+            if e.path == path:
+                self.dataChanged.emit(self.index(i, 0), self.index(i, 0))
+                return
 
     # -- загрузка ----------------------------------------------------------
 
@@ -257,6 +292,12 @@ class FileTableModel(QAbstractTableModel):
             if col == MODE_COL:
                 return mode_string(e.mode)
         if role == Qt.DecorationRole and col == NAME_COL:
+            if (self.thumbnails_on and self._thumb_store is not None
+                    and not e.is_dir and thumbnails.is_image(e.path)):
+                icon = self._thumb_store.get(e.path, e.mtime, e.size)
+                if icon is not None and not icon.isNull():
+                    return icon
+                return self._icon("file")  # заглушка, пока рисуется в фоне
             return self._icon("dir" if e.is_dir else ("link" if e.is_link else "file"))
         if role == Qt.ForegroundRole:
             pal = QApplication.instance().palette()
@@ -273,6 +314,26 @@ class FileTableModel(QAbstractTableModel):
         if role == Qt.ToolTipRole and col == SIZE_COL:
             return f"{e.size:,}".replace(",", " ")
         return None
+
+    def flags(self, index):
+        base = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        if index.isValid() and index.row() > 0:
+            base |= Qt.ItemIsDragEnabled
+        return base
+
+    def supportedDragActions(self):
+        return Qt.CopyAction
+
+    def mimeData(self, indexes):
+        rows = sorted({i.row() for i in indexes if i.isValid() and i.row() > 0})
+        entries: list[FileEntry] = []
+        if self.marked:
+            entries = self.marked_entries()
+        else:
+            entries = [e for e in (self.entry_at(r) for r in rows) if e]
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(e.path) for e in entries])
+        return mime
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole:

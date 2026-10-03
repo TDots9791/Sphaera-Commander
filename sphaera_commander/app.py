@@ -31,15 +31,17 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, config
+from . import mounts
 from .archives import ArchiveBrowser, archive_format, pack_items, unpack_archive
 from .dialogs import (
     BatchRenameDialog,
     OverwriteAskDialog,
     ProgressOpDialog,
     confirm_delete,
+    confirm_overwrite,
     show_op_result,
 )
-from .fsmodel import MTIME_COL, NAME_COL, SIZE_COL, compare_name_sets
+from .fsmodel import MTIME_COL, NAME_COL, SIZE_COL, compare_name_sets, entry_for
 from .ops import (
     ASK_CANCEL,
     KIND_COPY,
@@ -203,6 +205,10 @@ class MainWindow(QMainWindow):
             lambda pos, p=self.left: self._context_menu(p, pos))
         self.right.view.context_requested.connect(
             lambda pos, p=self.right: self._context_menu(p, pos))
+        self.left.view.drop_requested.connect(
+            lambda paths, target, p=self.left: self._on_drop(paths, target, p))
+        self.right.view.drop_requested.connect(
+            lambda paths, target, p=self.right: self._on_drop(paths, target, p))
         self.left.entry_activated.connect(self._open_entry)
         self.right.entry_activated.connect(self._open_entry)
         self.left.cursor_changed.connect(
@@ -242,6 +248,10 @@ class MainWindow(QMainWindow):
         act("Сравнить каталоги", "Shift+F2", self.compare_dirs)
         act("Открыть системным приложением", "Ctrl+E", self.open_system)
         act("Обновить", "Ctrl+R", self.refresh_all)
+        self.act_thumbs = act("Миниатюры картинок", None,
+                              lambda: self.toggle_thumbnails(), checkable=True)
+        self.act_thumbs.setChecked(config.qsettings().value(
+            "view/thumbnails", "false") in (True, "true", "1"))
         self.act_hidden = act("Скрытые файлы", "Ctrl+H",
                               lambda: self.toggle_hidden(), checkable=True)
         self.act_hidden.setChecked(self.show_hidden)
@@ -279,6 +289,7 @@ class MainWindow(QMainWindow):
         m_view = self.menuBar().addMenu("&Вид")
         m_view.addAction(self.act_hidden)
         m_view.addAction(self.act_quick)
+        m_view.addAction(self.act_thumbs)
         m_view.addAction(self._find_action("Обновить"))
         m_view.addAction(self.act_fullscreen)
         m_sort = m_view.addMenu("Сортировка")
@@ -309,8 +320,16 @@ class MainWindow(QMainWindow):
         if self.show_hidden:
             self.left.set_show_hidden(True)
             self.right.set_show_hidden(True)
+        if self.act_thumbs.isChecked():
+            self.toggle_thumbnails()
         self.left.wait_loaded()
         self.right.wait_loaded()
+
+    def toggle_thumbnails(self):
+        on = self.act_thumbs.isChecked()
+        self.left.set_thumbnails(on)
+        self.right.set_thumbnails(on)
+        config.qsettings().setValue("view/thumbnails", on)
 
     # ------------------------------------------------------------- служебные
 
@@ -433,7 +452,44 @@ class MainWindow(QMainWindow):
             seen.add(root)
             label = vol.displayName() or root
             menu.addAction(f"{label} ({root})", lambda r=root: panel.cd(r))
+        if mounts.available():
+            menu.addSeparator()
+            for dev in mounts.block_devices():
+                label = dev["label"] or dev["name"]
+                if dev["mountpoint"]:
+                    if dev["mountpoint"] == "/":
+                        continue  # корень не размонтируем
+                    menu.addAction(
+                        f"⏏ {label} ({dev['mountpoint']}) — размонтировать",
+                        lambda d=dev: self._unmount_device(d, panel))
+                else:
+                    menu.addAction(
+                        f"Подключить {label} [{dev['size']}]",
+                        lambda d=dev: self._mount_device(d, panel))
         menu.exec(self.cursor().pos())
+
+    def _mount_device(self, dev: dict, panel: FilePanel) -> None:
+        ok, message = mounts.mount(dev["path"])
+        if not ok:
+            QMessageBox.warning(self, "Монтирование",
+                                f"{dev['path']}:\n{message}")
+            return
+        self._status(f"Примонтировано: {message}")
+        if os.path.isdir(message):
+            panel.cd(message)
+        panel.refresh()
+
+    def _unmount_device(self, dev: dict, panel: FilePanel) -> None:
+        ok, message = mounts.unmount(dev["path"])
+        if not ok:
+            QMessageBox.warning(self, "Размонтирование",
+                                f"{dev['path']}:\n{message}")
+            return
+        self._status(f"Размонтировано: {dev['name']}")
+        for p in (self.left, self.right):
+            if p.current_path().startswith(dev["mountpoint"]):
+                p.up()
+        panel.refresh()
 
     def _about(self):
         QMessageBox.about(
@@ -665,6 +721,42 @@ class MainWindow(QMainWindow):
         self.refresh_all()
         if move:
             self.active.model.clear_marks()
+
+    def _on_drop(self, paths: list[str], target: str, panel: FilePanel) -> None:
+        """Файлы перетащили в панель (из другого приложения или между панелями)."""
+        if "::" in target:
+            self._status("В архив перетащить нельзя")
+            return
+        entries = []
+        for p in paths:
+            if os.path.dirname(p) == target:
+                continue  # уже в этой папке
+            entry = entry_for(p)
+            if entry is not None:
+                entries.append(entry)
+        if not entries:
+            self._status("Перетаскивать нечего: объекты уже в этой папке")
+            return
+        try:
+            plan = plan_copy_move(entries, target, move=False)
+        except OSError as exc:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось построить план:\n{exc}")
+            return
+        policy = POLICY_OVERWRITE
+        if plan.conflicts:
+            policy = confirm_overwrite(self, plan.conflicts, target)
+            if policy == "cancel":
+                return
+
+        def fn(progress_cb, is_cancelled):
+            return execute(KIND_COPY, plan, entries, policy,
+                           progress_cb, is_cancelled, ask_cb=self._bridge.ask)
+
+        def after(p=panel):
+            self.refresh_all()
+            p.refresh()
+
+        self._enqueue_op(f"Копирование (перетащено): {len(entries)}", fn, after=after)
 
     def _extract_selected(self, move: bool) -> None:
         """Извлечение выбранных членов архива в противоположную панель (F5/F6)."""

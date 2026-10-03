@@ -431,3 +431,24 @@ class SearchDialog(QDialog):
         if self._thread is not None:
             self._thread.join(timeout=3)
         super().reject()
+
+
+def confirm_overwrite(parent, conflicts: list[tuple[str, str]], dest_dir: str) -> str:
+    """Массовое решение о перезаписи (для перетаскивания): POLICY_*."""
+    names = "\n".join(dst for _src, dst in conflicts[:8])
+    if len(conflicts) > 8:
+        names += f"\n… и ещё {len(conflicts) - 8}"
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Question)
+    box.setWindowTitle("Перезапись файлов")
+    box.setText(f"В папке назначения уже есть {len(conflicts)} файл(ов) с такими именами:\n"
+                f"{names}\n\nПерезаписать?")
+    b_over = box.addButton("Перезаписать все", QMessageBox.AcceptRole)
+    b_skip = box.addButton("Пропустить все", QMessageBox.NoRole)
+    box.addButton("Отмена", QMessageBox.RejectRole)
+    box.exec()
+    if box.clickedButton() is b_over:
+        return "overwrite"
+    if box.clickedButton() is b_skip:
+        return "skip"
+    return "cancel"
