@@ -57,12 +57,18 @@ def set_enabled(names: set[str]) -> None:
 
 
 def _ensure_defaults() -> None:
-    """Первый запуск: включить всё найденное (если настройка ещё пустая)."""
+    """Впервые увиденные модули включаются автоматически; то, что
+    пользователь отключил сознательно, остаётся выключенным."""
     s = qsettings()
-    if s.value(SETTING + "/initialized", False) in (True, "true", "1"):
-        return
-    set_enabled({m["name"] for m in available()})
-    s.setValue(SETTING + "/initialized", True)
+    raw = s.value("plugins/known", [])
+    known = {str(v) for v in (raw if isinstance(raw, list) else [raw])}
+    available_names = {m["name"] for m in available()}
+    new = available_names - known
+    if new:
+        enabled = enabled_names() | new
+        set_enabled(enabled)
+    if available_names != known:
+        s.setValue("plugins/known", sorted(available_names))
 
 
 def load_all(app) -> tuple[list[SphaeraPlugin], list[tuple[str, str]]]:

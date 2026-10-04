@@ -244,6 +244,9 @@ class MainWindow(QMainWindow):
         for v in (self.left.view, self.right.view):
             v.delete_requested.connect(self._delete_by_key)
         self.gui_call.connect(lambda fn: fn())
+        for pnl in (self.left, self.right):
+            pnl.drive_menu_requested.connect(
+                lambda p=pnl: self._places_menu(p))
         self.left.view.context_requested.connect(
             lambda pos, p=self.left: self._context_menu(p, pos))
         self.right.view.context_requested.connect(
@@ -320,6 +323,10 @@ class MainWindow(QMainWindow):
                               lambda: self._places_menu(self.left))
         self.act_alt_f2 = act(tr("Правая панель: смена диска"), "Alt+F2",
                               lambda: self._places_menu(self.right))
+        act(tr("Левая панель: диски (NC)"), "Ctrl+F1",
+            lambda: self._places_menu(self.left, anchor=self.left.drive_button))
+        act(tr("Правая панель: диски (NC)"), "Ctrl+F2",
+            lambda: self._places_menu(self.right, anchor=self.right.drive_button))
 
     def _make_menu(self):
         m_file = self.menuBar().addMenu(tr("&Файл"))
@@ -373,6 +380,12 @@ class MainWindow(QMainWindow):
     def _load_plugins(self) -> None:
         self._plugin_dialogs = []
         self._plugins, self._plugin_errors = plugins_mod.load_all(self)
+        for plugin in self._plugins:
+            try:
+                plugin.on_loaded()
+            except Exception as exc:
+                self._status(tr("Модуль {name}: {err}").format(
+                    name=getattr(plugin, "id", "?"), err=exc))
         tools = self.menuBar().addMenu(tr("&Инструменты"))
         for plugin in self._plugins:
             try:
@@ -581,7 +594,9 @@ class MainWindow(QMainWindow):
         self.active.model.apply_sort(col)
         self.active.view.scrollToTop()
 
-    def _places_menu(self, panel: FilePanel):
+    def _places_menu(self, panel: FilePanel, anchor=None):
+        if anchor is None and getattr(panel, "drive_button", None) is not None:
+            anchor = panel.drive_button
         menu = QMenu(tr("Смена диска"), self)
         menu.addAction(tr("Домой"), lambda: panel.cd(os.path.expanduser("~")))
         menu.addAction(tr("Корень (/)"), lambda: panel.cd("/"))
@@ -628,7 +643,10 @@ class MainWindow(QMainWindow):
                 menu.addAction(
                     tr("{title} — подключить как диск").format(title=name),
                     lambda r=remote, pnl=panel: self._mount_cloud(r, pnl))
-        menu.exec(self.cursor().pos())
+        if anchor is not None:
+            menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
+        else:
+            menu.exec(self.cursor().pos())
 
     @staticmethod
     def _cloud_remotes() -> list[str]:

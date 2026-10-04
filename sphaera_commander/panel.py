@@ -16,7 +16,9 @@ from PySide6.QtWidgets import (
     QCompleter,
     QHeaderView,
     QLabel,
+    QHBoxLayout,
     QMessageBox,
+    QPushButton,
     QTableView,
     QToolTip,
     QVBoxLayout,
@@ -209,6 +211,7 @@ class FilePanel(QWidget):
     loaded = Signal(object)
     drop_requested = Signal(list, str)  # [пути], каталог назначения
     dir_info_ready = Signal(str, object)  # путь, DirStats — из фонового воркера
+    drive_menu_requested = Signal()  # клик по кнопке дисков
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -221,6 +224,10 @@ class FilePanel(QWidget):
         self._reveal_name: str | None = None
         self._vfs: ArchiveBrowser | None = None
         self._vfs_dir = ""
+
+        self.drive_button = QPushButton()
+        self.drive_button.setToolTip(tr("Диски и облака (меню подключения)"))
+        self.drive_button.clicked.connect(self.drive_menu_requested.emit)
 
         self.path_combo = QComboBox()
         self.path_combo.setInsertPolicy(QComboBox.NoInsert)
@@ -244,10 +251,15 @@ class FilePanel(QWidget):
 
         self.status_label = QLabel()
 
+        path_row = QHBoxLayout()
+        path_row.setSpacing(2)
+        path_row.addWidget(self.drive_button)
+        path_row.addWidget(self.path_combo, 1)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(1)
-        layout.addWidget(self.path_combo)
+        layout.addLayout(path_row)
         layout.addWidget(self.view)
         layout.addWidget(self.status_label)
 
@@ -268,6 +280,8 @@ class FilePanel(QWidget):
         self.dir_info_ready.connect(self._on_dir_info_ready)
 
         self.model.dataChanged.connect(lambda *_: self.update_status())
+        self.path_changed.connect(lambda _p: self._update_drive_label())
+        self._update_drive_label()
         self.model.modelReset.connect(self._on_model_reset)
         self.loaded.connect(self._on_loaded)
         thumbnails.store().ready.connect(self._on_thumb_ready)
@@ -584,6 +598,13 @@ class FilePanel(QWidget):
 
     def _on_model_reset(self) -> None:
         self.view.apply_column_layout()
+
+    def _update_drive_label(self) -> None:
+        from PySide6.QtCore import QStorageInfo
+
+        root = QStorageInfo(self.current_path()).rootPath()
+        label = root if root == "/" else (os.path.basename(root) or root)
+        self.drive_button.setText("💾 " + label)
 
     def _update_combo(self) -> None:
         self.path_combo.blockSignals(True)

@@ -43,7 +43,7 @@ class Plugin(SphaeraPlugin):
     title = "Терминал здесь"
 
     def tools_actions(self):
-        return [(tr("Открыть терминал здесь"), self._open_active, "Ctrl+T")]
+        return [(tr("Открыть терминал здесь"), self._open_active, None)]
 
     def context_actions(self, panel, entry):
         if entry is not None and entry.is_dir:
