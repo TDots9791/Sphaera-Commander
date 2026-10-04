@@ -448,6 +448,22 @@ _T = {
     "Синхронизировать с облаком": ("Sync with cloud", "与云端同步"),
     "Синхронизировать сейчас": ("Sync now", "立即同步"),
     "Убрать пару": ("Remove pair", "移除配对"),
+    "{title} — открыть": ("{title} — open", "{title} — 打开"),
+    "⏏ {title} — отключить облачный диск":
+        ("⏏ {title} — unmount cloud drive", "⏏ {title} — 卸载云端磁盘"),
+    "{title} — подключить как диск":
+        ("{title} — mount as drive", "{title} — 挂载为磁盘"),
+    "⏳ подключение облачного диска {title}…":
+        ("⏳ mounting cloud drive {title}…", "⏳ 正在挂载云端磁盘 {title}…"),
+    "Не удалось подключить {title}: {err}":
+        ("Failed to mount {title}: {err}", "无法挂载 {title}：{err}"),
+    "{title} подключён: {path}": ("{title} mounted: {path}", "{title} 已挂载：{path}"),
+    "Не удалось отключить: {err}": ("Failed to unmount: {err}", "无法卸载：{err}"),
+    "{title} отключён": ("{title} unmounted", "{title} 已卸载"),
+    "Облачный диск": ("Cloud drive", "云端磁盘"),
+    "rclone не найден": ("rclone not found", "未找到 rclone"),
+    "монтирование не поднялось": ("the mount did not come up", "挂载未能建立"),
+    "fusermount3 не найден": ("fusermount3 not found", "未找到 fusermount3"),
     "Имя": ("Name", "名称"),
     "Расш.": ("Ext", "扩展名"),
     "Размер": ("Size", "大小"),

@@ -31,8 +31,9 @@ from PySide6.QtWidgets import (
 )
 
 from . import __version__, config, i18n
+from .cloudsync import rclone_remotes as cloudsync_remotes
 from .i18n import tr
-from . import mounts
+from . import cloudmount, mounts
 from .archives import ArchiveBrowser, archive_format, pack_items, unpack_archive
 from .dialogs import (
     BatchRenameDialog,
@@ -153,6 +154,7 @@ def make_rename_dialog(parent, entry) -> QInputDialog:
 
 
 class MainWindow(QMainWindow):
+    gui_call = Signal(object)  # callable из фонового потока — выполнить в GUI
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Sphaera Commander")
@@ -237,6 +239,7 @@ class MainWindow(QMainWindow):
         self.right.view.installEventFilter(self)
         self.left.view.switch_requested.connect(self._switch_panels)
         self.right.view.switch_requested.connect(self._switch_panels)
+        self.gui_call.connect(lambda fn: fn())
         self.left.view.context_requested.connect(
             lambda pos, p=self.left: self._context_menu(p, pos))
         self.right.view.context_requested.connect(
@@ -563,7 +566,55 @@ class MainWindow(QMainWindow):
                         tr("Подключить {label} [{size}]").format(
                             label=label, size=dev["size"]),
                         lambda d=dev: self._mount_device(d, panel))
+        menu.addSeparator()
+        menu.addAction(tr("Синхронизация с облаком…"), self.open_cloud_sync)
+        for remote in cloudsync_remotes():
+            name = cloudmount.title(remote)
+            if cloudmount.is_mounted(remote):
+                path = cloudmount.mountpoint(remote)
+                menu.addAction(
+                    tr("{title} — открыть").format(title=name),
+                    lambda p=path: panel.cd(p))
+                menu.addAction(
+                    tr("⏏ {title} — отключить облачный диск").format(title=name),
+                    lambda r=remote: self._unmount_cloud(r, panel))
+            else:
+                menu.addAction(
+                    tr("{title} — подключить как диск").format(title=name),
+                    lambda r=remote, pnl=panel: self._mount_cloud(r, pnl))
         menu.exec(self.cursor().pos())
+
+    @staticmethod
+    def _cloud_remotes() -> list[str]:
+        return cloudsync_remotes()
+
+    def _mount_cloud(self, remote: str, panel: FilePanel) -> None:
+        self._status(tr("⏳ подключение облачного диска {title}…").format(
+            title=cloudmount.title(remote)))
+
+        def on_done(path, error):
+            def apply():
+                if error is not None:
+                    self._status(tr("Не удалось подключить {title}: {err}").format(
+                        title=cloudmount.title(remote), err=error))
+                    return
+                panel.cd(path)
+                self._status(tr("{title} подключён: {path}").format(
+                    title=cloudmount.title(remote), path=path))
+            self.gui_call.emit(apply)
+
+        cloudmount.mount_async(remote, on_done)
+
+    def _unmount_cloud(self, remote: str, panel: FilePanel) -> None:
+        try:
+            cloudmount.unmount(remote)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            QMessageBox.warning(self, tr("Облачный диск"),
+                                tr("Не удалось отключить: {err}").format(err=exc))
+            return
+        if cloudmount.is_cloud_path(panel.current_path()):
+            panel.up()
+        self._status(tr("{title} отключён").format(title=cloudmount.title(remote)))
 
     def _mount_device(self, dev: dict, panel: FilePanel) -> None:
         ok, message = mounts.mount(dev["path"])
@@ -1173,6 +1224,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- жизненный цикл
 
     def closeEvent(self, event):
+        cloudmount.unmount_ours()
         if self._thread is not None:
             ret = QMessageBox.question(
                 self, tr("Операция выполняется"),

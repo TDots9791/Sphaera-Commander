@@ -441,6 +441,10 @@ class FilePanel(QWidget):
         self.update_status()
         if entry is None or not entry.is_dir or self.is_vfs:
             return
+        from . import cloudmount
+
+        if cloudmount.is_cloud_path(entry.path):
+            return  # рекурсивный обход облака по сети — слишком дорого
         if entry.path in self._dirinfo_cache:
             return  # посчитано ранее — уже показано
         with self._dirinfo_lock:
