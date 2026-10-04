@@ -235,6 +235,8 @@ class MainWindow(QMainWindow):
         self.left.view.setFocus()
         self.left.view.installEventFilter(self)
         self.right.view.installEventFilter(self)
+        self.left.view.switch_requested.connect(self._switch_panels)
+        self.right.view.switch_requested.connect(self._switch_panels)
         self.left.view.context_requested.connect(
             lambda pos, p=self.left: self._context_menu(p, pos))
         self.right.view.context_requested.connect(
@@ -426,6 +428,13 @@ class MainWindow(QMainWindow):
         self._update_quick_view_visibility()
         self._update_quick_preview()
         self._update_title()
+
+    def _switch_panels(self) -> None:
+        """Tab/Shift+Tab (TC): активной становится другая панель,
+        фокус переходит в её таблицу."""
+        other = self._other()
+        self._set_active(other)
+        other.view.setFocus()
 
     # ------------------------------------------------------------- быстрый просмотр
 

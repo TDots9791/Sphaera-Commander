@@ -112,7 +112,8 @@ class I18nWindowTests(unittest.TestCase):
 
 
 class StartupFocusTests(unittest.TestCase):
-    """Фокус при старте — в таблице левой панели, не в строке адреса."""
+    """Фокус при старте — в таблице левой панели, не в строке адреса;
+    Tab/Shift+Tab переключает панели, фокус следует за активной."""
 
     @classmethod
     def setUpClass(cls):
@@ -125,6 +126,28 @@ class StartupFocusTests(unittest.TestCase):
         try:
             w.show()
             self.app.processEvents()
+            self.assertIs(QApplication.focusWidget(), w.left.view)
+        finally:
+            w.close()
+
+    def test_tab_switches_panels_with_focus(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        from sphaera_commander import app as app_mod
+
+        w = app_mod.MainWindow()
+        try:
+            w.show()
+            w.left.view.setFocus()
+            self.app.processEvents()
+            QTest.keyClick(w.left.view, Qt.Key_Tab)
+            self.app.processEvents()
+            self.assertIs(w.active, w.right)
+            self.assertIs(QApplication.focusWidget(), w.right.view)
+            QTest.keyClick(w.right.view, Qt.Key_Backtab)
+            self.app.processEvents()
+            self.assertIs(w.active, w.left)
             self.assertIs(QApplication.focusWidget(), w.left.view)
         finally:
             w.close()
