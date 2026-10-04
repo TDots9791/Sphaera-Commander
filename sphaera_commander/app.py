@@ -282,6 +282,7 @@ class MainWindow(QMainWindow):
         act(tr("Запаковать…"), "Alt+F5", self.do_pack)
         act(tr("Распаковать…"), "Alt+F6", self.do_unpack)
         act(tr("Сравнить каталоги"), "Shift+F2", self.compare_dirs)
+        act(tr("Синхронизация с облаком…"), None, self.open_cloud_sync)
         act(tr("Открыть системным приложением"), "Ctrl+E", self.open_system)
         act(tr("Обновить"), "Ctrl+R", self.refresh_all)
         self.act_thumbs = act(tr("Миниатюры картинок"), None,
@@ -355,6 +356,7 @@ class MainWindow(QMainWindow):
         m_panels.addAction(self._find_action(tr("Поменять панели местами")))
         m_panels.addSeparator()
         m_panels.addAction(self._find_action(tr("Сравнить каталоги")))
+        m_panels.addAction(self._find_action(tr("Синхронизация с облаком…")))
 
         m_help = self.menuBar().addMenu(tr("&Справка"))
         about = QAction(tr("О программе"), self)
@@ -612,10 +614,34 @@ class MainWindow(QMainWindow):
                "графит · пергамент · бирюза · бронза."))
         box.exec()
 
+    def open_cloud_sync(self, start_pair: dict | None = None) -> None:
+        """Диалог синхронизации с облаком (ya.d + rclone)."""
+        from sphaera_commander.dialogs import CloudSyncDialog
+
+        if getattr(self, "_cloud_dialog", None) is None \
+                or not self._cloud_dialog.isVisible():
+            panel = self.active
+            cur = panel.current_entry()
+            current_dir = (cur.path if cur is not None and cur.is_dir
+                           else panel.current_path())
+            self._cloud_dialog = CloudSyncDialog(self, current_dir)
+        self._cloud_dialog.show()
+        self._cloud_dialog.raise_()
+        if start_pair is not None:
+            self._cloud_dialog.start_sync(start_pair)
+
     def _context_menu(self, panel: FilePanel, pos) -> None:
         self._set_active(panel)
         entry = panel.current_entry()
         menu = QMenu(self)
+        if entry is not None and entry.is_dir and not panel.is_vfs:
+            from sphaera_commander import cloudsync
+
+            pair = cloudsync.pair_for_dir(entry.path)
+            if pair is not None:
+                menu.addAction(tr("Синхронизировать с облаком"),
+                               lambda p=pair: self.open_cloud_sync(p))
+                menu.addSeparator()
         if entry is not None and not entry.is_dir:
             menu.addAction(self._find_action(tr("Просмотр")))
             menu.addAction(self._find_action(tr("Правка")))

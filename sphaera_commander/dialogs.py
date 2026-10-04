@@ -10,6 +10,7 @@ import time
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QGridLayout,
     QHBoxLayout,
@@ -458,3 +459,239 @@ def confirm_overwrite(parent, conflicts: list[tuple[str, str]], dest_dir: str) -
     if box.clickedButton() is b_skip:
         return "skip"
     return "cancel"
+
+
+class CloudSyncDialog(QDialog):
+    """Синхронизация с облаком: пары ya.d (через yad-sync) и собственные
+    пары rclone bisync (Яндекс.Диск, Google Drive, любые remote rclone).
+
+    Немодальное: окно живёт, пока идут запуски; вывод rclone — в журнал.
+    """
+
+    runLine = Signal(str)     # строка вывода синхронизации (из потока)
+    runFinished = Signal(int)  # код возврата (из потока)
+    gdriveFinished = Signal(int)  # итог авторизации Google (из потока)
+
+    def __init__(self, parent, current_dir: str):
+        super().__init__(parent)
+        from sphaera_commander import cloudsync
+
+        self.cloudsync = cloudsync
+        self.setWindowTitle(tr("Синхронизация с облаком"))
+        self.setModal(False)
+        self.resize(760, 480)
+        self.current_dir = current_dir
+        self._holder: dict = {}
+        self._running_pair: dict | None = None
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(
+            (tr("Локальная папка"), tr("Облако"), tr("Источник")))
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.verticalHeader().hide()
+
+        # форма добавления: текущая папка ↔ remote
+        form_row = QHBoxLayout()
+        self.lbl_add = QLabel(tr("Новая пара: текущая папка →"))
+        self.remote_combo = QComboBox()
+        self.remote_path = QLineEdit()
+        self.btn_browse = QPushButton(tr("Обзор на облаке…"))
+        self.btn_browse.clicked.connect(self._browse_remote)
+        self.btn_add = QPushButton(tr("Добавить пару"))
+        self.btn_add.clicked.connect(self._add_pair)
+        form_row.addWidget(self.lbl_add)
+        form_row.addWidget(self.remote_combo, 1)
+        form_row.addWidget(self.remote_path, 2)
+        form_row.addWidget(self.btn_browse)
+        form_row.addWidget(self.btn_add)
+
+        self.log = QLabel("")
+        self.log.setWordWrap(True)
+        self.log.setMaximumHeight(64)
+
+        row = QHBoxLayout()
+        self.btn_sync = QPushButton(tr("Синхронизировать сейчас"))
+        self.btn_sync.setDefault(True)
+        self.btn_sync.clicked.connect(self._sync_selected)
+        self.btn_remove = QPushButton(tr("Убрать пару"))
+        self.btn_remove.clicked.connect(self._remove_pair)
+        self.btn_gdrive = QPushButton(tr("Подключить Google Диск"))
+        self.btn_gdrive.clicked.connect(self._connect_gdrive)
+        btn_close = QPushButton(tr("Закрыть"))
+        btn_close.clicked.connect(self.close)
+        row.addWidget(self.btn_gdrive)
+        row.addStretch(1)
+        row.addWidget(self.btn_remove)
+        row.addWidget(self.btn_sync)
+        row.addWidget(btn_close)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.table, 1)
+        layout.addLayout(form_row)
+        layout.addWidget(self.log)
+        layout.addLayout(row)
+
+        self.runLine.connect(self._on_run_line)
+        self.runFinished.connect(self._on_run_finished)
+        self.gdriveFinished.connect(self._gdrive_done_ui)
+        self.reload()
+        self._reload_remotes()
+
+    # -- данные ------------------------------------------------------------
+
+    def _pairs_rows(self) -> list[dict]:
+        rows = []
+        for p in self.cloudsync.yad_pairs():
+            rows.append(dict(p, source="yad",
+                             cloud=f"yad:{p['remote']}"))
+        for p in self.cloudsync.load_pairs():
+            rows.append(dict(p, source="sphaera", cloud=p["remote"]))
+        return rows
+
+    def reload(self) -> None:
+        rows = self._pairs_rows()
+        self.table.setRowCount(len(rows))
+        for r, p in enumerate(rows):
+            for c, text in enumerate((p["local"], p["cloud"],
+                                      "Ya.D" if p["source"] == "yad"
+                                      else "rclone")):
+                self.table.setItem(r, c, QTableWidgetItem(text))
+            self.table.item(r, 0).setData(Qt.UserRole, p)
+
+    def _reload_remotes(self) -> None:
+        remotes = self.cloudsync.rclone_remotes()
+        self.remote_combo.clear()
+        self.remote_combo.addItems(remotes)
+        if "gdrive:" in remotes:
+            self.btn_gdrive.hide()
+        elif self.cloudsync.rclone_bin():
+            self.btn_gdrive.setToolTip(
+                tr("rclone config create gdrive drive, затем вход в браузере"))
+
+    # -- запуск синхронизации ------------------------------------------------
+
+    def start_sync(self, pair: dict) -> None:
+        if self._running_pair is not None:
+            self.log.setText(tr("Синхронизация уже идёт — дождитесь завершения"))
+            return
+        self._running_pair = pair
+        self.btn_sync.setEnabled(False)
+        name = pair.get("local", "")
+        self.log.setText(tr("Синхронизация: {name} …").format(name=name))
+        self.cloudsync.run_sync(
+            pair,
+            on_line=self.runLine.emit,
+            done=self.runFinished.emit,
+            _proc_holder=self._holder)
+
+    def _sync_selected(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            self.log.setText(tr("Выберите пару в таблице"))
+            return
+        pair = self.table.item(row, 0).data(Qt.UserRole)
+        self.start_sync(pair)
+
+    def _on_run_line(self, line: str) -> None:
+        text = line.strip()
+        if not text:
+            return
+        self.log.setText(text[:300])
+
+    def _on_run_finished(self, rc: int) -> None:
+        pair = self._running_pair or {}
+        self._running_pair = None
+        self.btn_sync.setEnabled(True)
+        if rc == 0:
+            self.log.setText(tr("Готово: {name}").format(
+                name=pair.get("local", "")))
+        else:
+            self.log.setText(tr("Завершено с ошибкой (код {rc}): {name}").format(
+                rc=rc, name=pair.get("local", "")))
+
+    def closeEvent(self, event) -> None:
+        if self._running_pair is not None:
+            # окно закрывать нельзя: rclone bisync прерывать опасно,
+            # восстановится только через resync
+            event.ignore()
+            self.log.setText(tr("Дождитесь завершения синхронизации (или отмените)"))
+            return
+        event.accept()
+
+    # -- пары ----------------------------------------------------------------
+
+    def _add_pair(self) -> None:
+        local = self.current_dir
+        remote_name = self.remote_combo.currentText().strip()
+        remote_path = self.remote_path.text().strip().strip("/")
+        if not remote_name:
+            self.log.setText(tr("Нет ни одного remote в rclone (rclone config)"))
+            return
+        remote = f"{remote_name.rstrip(':')}:{remote_path}"
+        if os.path.exists(local) and not os.path.isdir(local):
+            self.log.setText(tr("Локальная папка пары должна быть каталогом"))
+            return
+        self.cloudsync.add_pair(local, remote)
+        self.reload()
+        self.log.setText(tr("Пара добавлена: {local} ↔ {remote}").format(
+            local=local, remote=remote))
+
+    def _remove_pair(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        pair = self.table.item(row, 0).data(Qt.UserRole)
+        if pair.get("source") == "yad":
+            self.log.setText(tr("Пары Ya.D убираются в самой ya.d (yad-sync remove)"))
+            return
+        self.cloudsync.remove_pair(pair["id"])
+        self.reload()
+
+    def _browse_remote(self) -> None:
+        remote_name = self.remote_combo.currentText().strip()
+        current = f"{remote_name.rstrip(':')}:" if remote_name else ""
+        if not current:
+            return
+        dirs = self.cloudsync.remote_dirs(current)
+        if not dirs:
+            self.log.setText(tr("На облаке нет подкаталогов (или не удалось прочитать)"))
+            return
+        name, ok = QInputDialog.getItem(self, tr("Обзор на облаке"),
+                                        tr("Каталоги {remote}:").format(remote=current),
+                                        dirs, 0, False)
+        if ok:
+            base = self.remote_path.text().strip().strip("/")
+            self.remote_path.setText(
+                f"{base}/{name}" if base else name)
+
+    def _connect_gdrive(self) -> None:
+        """Создать gdrive: и открыть браузер OAuth (rclone config reconnect)."""
+        create, reconnect = self.cloudsync.connect_remote("gdrive")
+        self.btn_gdrive.setEnabled(False)
+        self.log.setText(tr("Подключение Google Диска: откройте браузер и разрешите доступ…"))
+
+        def worker():
+            import subprocess
+
+            try:
+                subprocess.run(create, capture_output=True, text=True, timeout=60)
+                # reconnect открывает браузер и ждёт разрешения доступа
+                proc = subprocess.run(reconnect, capture_output=True,
+                                      text=True, timeout=300)
+                rc = proc.returncode
+            except (OSError, subprocess.TimeoutExpired):
+                rc = -1
+            self.gdriveFinished.emit(rc)
+
+        threading.Thread(target=worker, daemon=True, name="gdrive-auth").start()
+
+    def _gdrive_done_ui(self, rc: int) -> None:
+        self.btn_gdrive.setEnabled(True)
+        self._reload_remotes()
+        if rc == 0:
+            self.log.setText(tr("Google Диск подключён (remote gdrive:)"))
+        else:
+            self.log.setText(tr("Не удалось подключить Google Диск (см. rclone config)"))

@@ -402,6 +402,52 @@ _T = {
     "   •   {name}: {size} • {dirs} • {files}":
         ("   •   {name}: {size} • {dirs} • {files}", "   •   {name}：{size} • {dirs} • {files}"),
     "<КАТ>": ("<DIR>", "<目录>"),
+    "Google Диск подключён (remote gdrive:)":
+        ("Google Drive connected (gdrive:)", "Google 云端硬盘已连接（gdrive:）"),
+    "rclone config create gdrive drive, затем вход в браузере":
+        ("rclone config create gdrive drive, then sign in via browser",
+         "rclone config create gdrive drive，然后在浏览器中登录"),
+    "Выберите пару в таблице": ("Select a pair in the table", "请在表格中选择配对"),
+    "Готово: {name}": ("Done: {name}", "完成：{name}"),
+    "Добавить пару": ("Add pair", "添加配对"),
+    "Дождитесь завершения синхронизации (или отмените)":
+        ("Wait for the sync to finish (or cancel it)", "请等待同步完成（或取消）"),
+    "Завершено с ошибкой (код {rc}): {name}":
+        ("Finished with error (code {rc}): {name}", "完成但出错（代码 {rc}）：{name}"),
+    "Закрыть": ("Close", "关闭"),
+    "Каталоги {remote}:": ("Directories of {remote}:", "{remote} 的目录："),
+    "Локальная папка": ("Local folder", "本地文件夹"),
+    "Локальная папка пары должна быть каталогом":
+        ("The local path of a pair must be a directory", "配对的本地路径必须是目录"),
+    "На облаке нет подкаталогов (или не удалось прочитать)":
+        ("No subdirectories on the cloud (or failed to list)", "云端没有子目录（或无法读取）"),
+    "Не удалось подключить Google Диск (см. rclone config)":
+        ("Failed to connect Google Drive (see rclone config)",
+         "无法连接 Google 云端硬盘（见 rclone config）"),
+    "Нет ни одного remote в rclone (rclone config)":
+        ("No rclone remotes configured (rclone config)", "rclone 中没有任何 remote（rclone config）"),
+    "Новая пара: текущая папка →": ("New pair: current folder →", "新配对：当前文件夹 →"),
+    "Обзор на облаке": ("Browse on cloud", "在云端浏览"),
+    "Обзор на облаке…": ("Browse on cloud…", "在云端浏览…"),
+    "Облако": ("Cloud", "云端"),
+    "Пара добавлена: {local} ↔ {remote}":
+        ("Pair added: {local} ↔ {remote}", "已添加配对：{local} ↔ {remote}"),
+    "Пары Ya.D убираются в самой ya.d (yad-sync remove)":
+        ("Ya.D pairs are removed in ya.d itself (yad-sync remove)",
+         "Ya.D 配对请在 ya.d 中移除（yad-sync remove）"),
+    "Подключение Google Диска: откройте браузер и разрешите доступ…":
+        ("Connecting Google Drive: open the browser and grant access…",
+         "正在连接 Google 云端硬盘：请在浏览器中授权…"),
+    "Подключить Google Диск": ("Connect Google Drive", "连接 Google 云端硬盘"),
+    "Синхронизация с облаком": ("Cloud sync", "云同步"),
+    "Синхронизация с облаком…": ("Cloud sync…", "云同步…"),
+    "Синхронизация уже идёт — дождитесь завершения":
+        ("A sync is already running — wait for it to finish",
+         "同步已在进行 — 请等待完成"),
+    "Синхронизация: {name} …": ("Syncing: {name} …", "正在同步：{name} …"),
+    "Синхронизировать с облаком": ("Sync with cloud", "与云端同步"),
+    "Синхронизировать сейчас": ("Sync now", "立即同步"),
+    "Убрать пару": ("Remove pair", "移除配对"),
     "Имя": ("Name", "名称"),
     "Расш.": ("Ext", "扩展名"),
     "Размер": ("Size", "大小"),
