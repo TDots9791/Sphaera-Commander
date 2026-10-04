@@ -44,6 +44,7 @@ class FileView(QTableView):
     перетаскивание файлов из панели и приём drop'ов."""
 
     switch_requested = Signal()
+    delete_requested = Signal(bool)  # True — безвозвратно (Shift+Del)
     entry_activated = Signal(object)  # FileEntry | None
     mask_requested = Signal(bool)     # True — отметить по маске, False — снять
     context_requested = Signal(object)  # QPoint
@@ -176,6 +177,12 @@ class FileView(QTableView):
             row = self.currentIndex().row()
             model.toggle_mark(row)
             self.set_current_row(row + 1)
+            event.accept()
+            return
+        if key == Qt.Key_Delete:
+            # TC: Del — в корзину, Shift+Del — безвозвратно
+            self.delete_requested.emit(
+                bool(event.modifiers() & Qt.ShiftModifier))
             event.accept()
             return
         if key == Qt.Key_Plus:

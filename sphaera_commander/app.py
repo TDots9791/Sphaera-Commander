@@ -239,6 +239,8 @@ class MainWindow(QMainWindow):
         self.right.view.installEventFilter(self)
         self.left.view.switch_requested.connect(self._switch_panels)
         self.right.view.switch_requested.connect(self._switch_panels)
+        for v in (self.left.view, self.right.view):
+            v.delete_requested.connect(self._delete_by_key)
         self.gui_call.connect(lambda fn: fn())
         self.left.view.context_requested.connect(
             lambda pos, p=self.left: self._context_menu(p, pos))
@@ -433,6 +435,13 @@ class MainWindow(QMainWindow):
         self._update_quick_view_visibility()
         self._update_quick_preview()
         self._update_title()
+
+    def _delete_by_key(self, permanent: bool) -> None:
+        """Del/Shift+Del в таблице: та же обработка, что F8/Shift+F8."""
+        if permanent:
+            self.do_delete_permanent()
+        else:
+            self.do_delete()
 
     def _switch_panels(self) -> None:
         """Tab/Shift+Tab (TC): активной становится другая панель,

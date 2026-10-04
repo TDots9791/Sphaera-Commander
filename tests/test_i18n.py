@@ -155,3 +155,67 @@ class StartupFocusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeleteKeyTests(unittest.TestCase):
+    """Del — в корзину, Shift+Del — безвозвратно: та же цепь, что F8."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_view_emits_delete_requested(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        from sphaera_commander.panel import FileView
+
+        v = FileView()
+        got = []
+        v.delete_requested.connect(got.append)
+        QTest.keyClick(v, Qt.Key_Delete)
+        QTest.keyClick(v, Qt.Key_Delete, Qt.ShiftModifier)
+        self.assertEqual(got, [False, True])
+
+    def test_del_trashes_via_app_chain(self):
+        import time
+        import unittest.mock
+
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        from sphaera_commander import app as app_mod
+        from sphaera_commander.ops import OpResult
+
+        w = app_mod.MainWindow()
+        try:
+            w.show()
+            self.app.processEvents()
+            tmp = tempfile.mkdtemp(prefix="sc_del_")
+            self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+            target = os.path.join(tmp, "файл.txt")
+            with open(target, "w") as f:
+                f.write("x")
+            w.left.cd(tmp)
+            w.left.wait_loaded()
+            w.left.view.set_current_row(
+                w.left.model.row_of_name("файл.txt"))
+            calls = []
+
+            def fake_trash(entries, progress_cb, is_cancelled):
+                calls.extend(e.path for e in entries)
+                return OpResult(done_files=len(entries))
+
+            with unittest.mock.patch.object(app_mod, "confirm_delete",
+                                            return_value=True), \
+                 unittest.mock.patch.object(app_mod, "execute_trash",
+                                            side_effect=fake_trash):
+                QTest.keyClick(w.left.view, Qt.Key_Delete)
+                deadline = time.monotonic() + 5
+                while w._thread is not None and time.monotonic() < deadline:
+                    self.app.processEvents()
+                    time.sleep(0.02)
+            self.assertEqual(calls, [target])
+        finally:
+            w.close()
+            self.app.processEvents()
