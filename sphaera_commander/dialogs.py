@@ -695,3 +695,79 @@ class CloudSyncDialog(QDialog):
             self.log.setText(tr("Google Диск подключён (remote gdrive:)"))
         else:
             self.log.setText(tr("Не удалось подключить Google Диск (см. rclone config)"))
+
+
+class PluginsDialog(QDialog):
+    """Управление модулями: включение/выключение (применяется после
+    перезапуска), источник, текст ошибки загрузки."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        from sphaera_commander import pluginmgr as plugins_mod
+
+        self.plugins_mod = plugins_mod
+        self.setWindowTitle(tr("Плагины"))
+        self.resize(680, 420)
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(
+            (tr("Модуль"), tr("Источник"), tr("Включён")))
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.setSelectionMode(QTableWidget.NoSelection)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.verticalHeader().hide()
+
+        self.errors = QLabel("")
+        self.errors.setWordWrap(True)
+        self.hint = QLabel(tr("Пользовательские модули: {dir} — применится после перезапуска").format(
+            dir=plugins_mod.USER_DIR))
+        self.hint.setWordWrap(True)
+
+        close = QPushButton(tr("Закрыть"))
+        close.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(close)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.table, 1)
+        layout.addWidget(self.errors)
+        layout.addWidget(self.hint)
+        layout.addLayout(row)
+        self.table.itemChanged.connect(self._on_item_changed)
+        self.reload()
+
+    def _on_item_changed(self, item):
+        if item.column() != 2:
+            return
+        name = self.table.item(item.row(), 0).text()
+        enabled = self.plugins_mod.enabled_names()
+        if item.checkState() == Qt.Checked:
+            enabled.add(name)
+        else:
+            enabled.discard(name)
+        self.plugins_mod.set_enabled(enabled)
+
+    def reload(self):
+        enabled = self.plugins_mod.enabled_names()
+        errors = dict(getattr(self.app_parent(), "_plugin_errors", []))
+        metas = self.plugins_mod.available()
+        self.table.setRowCount(len(metas))
+        for r, meta in enumerate(metas):
+            source = (tr("встроенный") if meta["source"] == "builtin"
+                      else tr("пользовательский"))
+            self.table.setItem(r, 0, QTableWidgetItem(meta["name"]))
+            self.table.setItem(r, 1, QTableWidgetItem(source))
+            box = QTableWidgetItem()
+            box.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled
+                         | Qt.ItemIsSelectable)
+            box.setCheckState(Qt.Checked if meta["name"] in enabled
+                              else Qt.Unchecked)
+            self.table.setItem(r, 2, box)
+            if meta["name"] in errors:
+                box.setToolTip(errors[meta["name"]])
+        self.errors.setText("\n".join(
+            f"⚠ {name}: {err}" for name, err in errors.items()))
+
+    def app_parent(self):
+        return self.parent()

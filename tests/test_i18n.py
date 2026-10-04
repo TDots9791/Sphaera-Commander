@@ -27,7 +27,8 @@ def _tr_const_keys() -> set[str]:
     root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         "sphaera_commander")
     keys = set()
-    for path in glob.glob(os.path.join(root, "*.py")):
+    for path in glob.glob(os.path.join(root, "*.py")) + \
+            glob.glob(os.path.join(root, "plugins", "*.py")):
         tree = ast.parse(open(path, encoding="utf-8").read())
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)

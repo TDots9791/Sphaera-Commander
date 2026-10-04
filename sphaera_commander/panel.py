@@ -524,9 +524,7 @@ class FilePanel(QWidget):
         return [cur] if cur else []
 
     def select_all(self, on: bool) -> None:
-        for e in self.model.entries:
-            if not e.is_dir:
-                self.model.set_mark(e.name, on)
+        self.model.mark_mask("*", on)  # массово, без поштучных обновлений
         self.update_status()
 
     def select_mask(self, pattern: str, on: bool) -> int:

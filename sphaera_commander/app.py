@@ -34,6 +34,7 @@ from . import __version__, config, i18n
 from .cloudsync import rclone_remotes as cloudsync_remotes
 from .i18n import tr
 from . import cloudmount, mounts
+from . import pluginmgr as plugins_mod
 from .archives import ArchiveBrowser, archive_format, pack_items, unpack_archive
 from .dialogs import (
     BatchRenameDialog,
@@ -230,6 +231,7 @@ class MainWindow(QMainWindow):
 
         self._make_actions()
         self._make_menu()
+        self._load_plugins()
         self._make_corner_close()
         self._restore_panels()
         self._set_active(self.left)
@@ -367,6 +369,41 @@ class MainWindow(QMainWindow):
         about = QAction(tr("О программе"), self)
         about.triggered.connect(self._about)
         m_help.addAction(about)
+
+    def _load_plugins(self) -> None:
+        self._plugin_dialogs = []
+        self._plugins, self._plugin_errors = plugins_mod.load_all(self)
+        tools = self.menuBar().addMenu(tr("&Инструменты"))
+        for plugin in self._plugins:
+            try:
+                actions = plugin.tools_actions()
+            except Exception:
+                actions = []
+            for title, slot, hotkey in actions:
+                act = tools.addAction(title)
+                if hotkey:
+                    act.setShortcut(hotkey)
+                act.triggered.connect(slot)
+        tools.addSeparator()
+        act = tools.addAction(tr("Плагины…"))
+        act.triggered.connect(self._manage_plugins)
+        for name, err in self._plugin_errors:
+            self._status(tr("Модуль {name} не загрузился: {err}").format(
+                name=name, err=err))
+
+    def _manage_plugins(self) -> None:
+        from sphaera_commander.dialogs import PluginsDialog
+
+        PluginsDialog(self).exec()
+
+    def _plugin_context_actions(self, panel, entry):
+        out = []
+        for plugin in getattr(self, "_plugins", []):
+            try:
+                out.extend(plugin.context_actions(panel, entry))
+            except Exception:
+                pass
+        return out
 
     def _make_corner_close(self):
         """Крестик в строке меню: в полноэкранном рамки окна нет
@@ -715,6 +752,11 @@ class MainWindow(QMainWindow):
         menu.addAction(self._find_action(tr("Открыть системным приложением")))
         menu.addAction(tr("Копировать полный путь"),
                        lambda: self._copy_paths(panel))
+        plugin_actions = self._plugin_context_actions(panel, entry)
+        if plugin_actions:
+            menu.addSeparator()
+            for title, slot in plugin_actions:
+                menu.addAction(title, slot)
         menu.exec(panel.view.viewport().mapToGlobal(pos))
 
     def _copy_paths(self, panel: FilePanel) -> None:
@@ -1233,6 +1275,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------- жизненный цикл
 
     def closeEvent(self, event):
+        if getattr(self, "_plugins", None):
+            plugins_mod.shutdown(self._plugins)
         cloudmount.unmount_ours()
         if self._thread is not None:
             ret = QMessageBox.question(
