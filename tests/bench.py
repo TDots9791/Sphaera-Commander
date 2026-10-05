@@ -1,13 +1,22 @@
 """Бенчмарк регрессий производительности — мандат 0.19.0 («самые быстрые
 и лёгкие»). Замеряет и печатает:
 
-  startup_s   — старт MainWindow (offscreen) до готовности панелей
-  rss_mib     — RSS процесса сразу после старта
-  scan_s      — scan_directory + sort_entries на 100 000 файлов
-  mark_s      — mark_mask на 10 000 строках
-  data_s      — 1000 вызовов FileTableModel.data (DisplayRole)
+  startup_s    — старт MainWindow (offscreen) до готовности панелей
+  rss_mib      — RSS (пик ru_maxrss) сразу после старта — справочно
+  rss_load_mib — RSS под максимальной нагрузкой: все плагины по умолчанию
+                 (15 шт.), миниатюры, размеры каталогов, быстрый просмотр,
+                 по 3 вкладки на панель, панели на фикстуре с картинками
+  scan_s       — scan_directory + sort_entries на 100 000 файлов
+  mark_s       — mark_mask на 10 000 строках
+  data_s       — 1000 вызовов FileTableModel.data (DisplayRole)
 
-Гейты 0.19.0: старт <= 0.5 с, RSS <= 80 МиБ, scan <= 1.5 с, mark <= 0.1 с.
+Гейты (0.22.0, решение владельца «честно измерить с максимальной
+нагрузкой; гейт = измеренное со всеми плагинами по умолчанию»):
+старт <= 0.5 с, RSS под нагрузкой <= 99 МиБ — измерено 97.3–97.4 за три
+прогона 05.10.2026 (запас ~1.5% только против дребезга; память от
+загрузки CPU не зависит — замер честен даже на шумной машине), scan
+<= 1.5 с, mark <= 0.1 с. Гейт «RSS после старта» убран: база Qt/PySide6
+~86 МиБ от нашего кода не зависит, контроль — под нагрузкой.
 Запуск: .venv/bin/python tests/bench.py [--json]
 
 RSS меряется как пик процесса (ru_maxrss); старт — отдельным процессом,
@@ -28,7 +37,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("XDG_CONFIG_HOME", tempfile.mkdtemp(prefix="sc_bench_"))
 
-GATES = {"startup_s": 0.5, "rss_mib": 80.0, "scan_s": 1.5, "mark_s": 0.1}
+GATES = {"startup_s": 0.5, "rss_load_mib": 99.0, "scan_s": 1.5,
+         "mark_s": 0.1}  # rss_load_mib: измерено 97.3-97.4 (05.10.2026)
 
 STARTUP_PROBE = r"""
 import os, resource, sys, time
@@ -49,6 +59,75 @@ rss_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
 print("PROBE", round(t1 - t0, 3), round(t2 - t1, 3), round(t3 - t2, 3),
       round(rss_mib, 1))
 """
+
+
+LOAD_PROBE = r"""
+import os, resource, sys, time
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("XDG_CONFIG_HOME", {config_home!r})
+sys.path.insert(0, {root!r})
+fixture = {fixture!r}
+from PySide6.QtWidgets import QApplication
+app = QApplication([])
+from sphaera_commander import theme
+theme.apply_theme(app, "dark")  # фирменная тема — состояние по умолчанию
+from sphaera_commander.app import MainWindow
+win = MainWindow()
+win.show()
+win.act_thumbs.setChecked(True); win.toggle_thumbnails()
+win.act_dirsizes.setChecked(True); win.toggle_dirsizes()
+win.act_quick.setChecked(True); win.toggle_quick_view()
+win.left.cd(fixture); win.right.cd(fixture)
+win.left.wait_loaded(); win.right.wait_loaded()
+plugins = {{p.id: p for p in win._plugins}}
+tabs_mod = plugins.get("foldertabs")
+if tabs_mod is not None:
+    for _ in range(2):
+        tabs_mod._tabs[win.left].new_tab()
+        tabs_mod._tabs[win.right].new_tab()
+# дождаться воркеров (миниатюры, размеры каталогов), минимум 2 секунды прокачки
+deadline = time.time() + 30
+while time.time() < deadline:
+    app.processEvents()
+    pending = sum(len(p._dirsize_pending) for p in (win.left, win.right))
+    if pending == 0 and time.time() >= deadline - 28:
+        break
+    time.sleep(0.02)
+rss_mib = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+print("LOADPROBE", round(rss_mib, 1))
+"""
+
+
+def make_load_fixture(root: str) -> str:
+    """Фикстура «рабочий каталог»: файлы, вложенный каталог, картинки
+    (миниатюрам нужно что рисовать)."""
+    from PySide6.QtGui import QColor, QImage
+
+    os.makedirs(root, exist_ok=True)
+    sub = os.path.join(root, "подкаталог")
+    os.makedirs(sub, exist_ok=True)
+    for i in range(200):
+        with open(os.path.join(root, f"документ_{{i:03d}}.txt"), "wb") as f:
+            f.write(("содержимое\n" * (i + 1)).encode("utf-8"))
+    for i in range(24):  # картинки для миниатюр
+        img = QImage(300, 200, QImage.Format.Format_RGB32)
+        img.fill(QColor((i * 10) % 255, (i * 7) % 255, (i * 13) % 255))
+        img.save(os.path.join(root, f"фото_{{i:02d}}.png"), "PNG")
+    for i in range(50):
+        with open(os.path.join(sub, f"вложенный_{{i:03d}}.dat"), "wb") as f:
+            f.write(b"x" * 256)
+    return root
+
+
+def measure_rss_load(root: str, config_home: str, fixture: str) -> dict:
+    code = LOAD_PROBE.format(root=root, config_home=config_home,
+                             fixture=fixture)
+    out = subprocess.run([sys.executable, "-c", code],
+                         capture_output=True, text=True, timeout=180)
+    for line in out.stdout.splitlines():
+        if line.startswith("LOADPROBE"):
+            return {"rss_load_mib": float(line.split()[1])}
+    raise RuntimeError("зонд нагрузки не отчитался: " + out.stderr[-400:])
 
 
 def measure_startup(root: str, config_home: str) -> dict:
@@ -125,6 +204,14 @@ def main() -> None:
     result: dict = {"python": sys.version.split()[0]}
     result.update(measure_startup(root, os.environ["XDG_CONFIG_HOME"]))
 
+    fixture = tempfile.mkdtemp(prefix="sc_bench_load_")
+    try:
+        make_load_fixture(fixture)
+        result.update(measure_rss_load(root, os.environ["XDG_CONFIG_HOME"],
+                                       fixture))
+    finally:
+        shutil.rmtree(fixture, ignore_errors=True)
+
     tmp = tempfile.mkdtemp(prefix="sc_bench_tree_")
     try:
         entries = build_tree(tmp, 100_000)
@@ -146,8 +233,9 @@ def main() -> None:
         print(f"старт MainWindow:  {result['startup_s']:.3f} с "
               f"(Qt {result['qt_import_s']:.2f} + импорт {result['app_import_s']:.2f}"
               f" + панели {result['panels_s']:.2f})  гейт {gates.get('startup_s')}")
-        print(f"RSS после старта:  {result['rss_mib']:.1f} МиБ  "
-              f"гейт {gates.get('rss_mib')}")
+        print(f"RSS после старта:  {result['rss_mib']:.1f} МиБ  (справочно)")
+        print(f"RSS под нагрузкой: {result['rss_load_mib']:.1f} МиБ  "
+              f"гейт {gates.get('rss_load_mib')}")
         print(f"scan 100k + сорт:  {result['scan_s']:.3f} с "
               f"({result['scan_files']} записей)  гейт {gates.get('scan_s')}")
         print(f"mark_mask 10k:     {result['mark_s']:.4f} с  "
