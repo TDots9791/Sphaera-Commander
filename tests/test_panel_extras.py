@@ -523,6 +523,42 @@ class PropertiesTests(unittest.TestCase):
         dlg._apply()
         self.assertTrue(os.stat(path).st_mode & 0o100)
 
+    def test_recursive_chmod_async_via_queue(self):
+        """Рекурсивные права идут через очередь операций (фон, как F5)."""
+        import time as _time
+
+        from sphaera_commander.app import MainWindow
+        from sphaera_commander.dialogs import PropertiesDialog
+
+        root = os.path.join(self.tmp, "дерево")
+        sub = os.path.join(root, "внутри")
+        os.makedirs(sub)
+        files = [os.path.join(root, "a.sh"), os.path.join(sub, "b.sh")]
+        for path in files:
+            with open(path, "w") as f:
+                f.write("x")
+            os.chmod(path, 0o600)
+
+        win = MainWindow()
+        try:
+            win.show()
+            dlg = PropertiesDialog(
+                win, root,
+                apply_async=lambda fn, after: win._enqueue_op(
+                    "Права", fn, after=lambda: (win.refresh_all(), after())))
+            for _idx, box in dlg._boxes:
+                box.setChecked(True)  # rwxrwxrwx
+            dlg.recursive.setChecked(True)
+            dlg._apply()  # рекурсивно → в очередь, диалог закрылся
+            deadline = _time.time() + 15
+            while _time.time() < deadline and win._thread is not None:
+                QApplication.processEvents()
+                _time.sleep(0.02)
+            for path in files:
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o777)
+        finally:
+            win.close()
+
     def test_details_dir_counts(self):
         from sphaera_commander import fsmodel
 

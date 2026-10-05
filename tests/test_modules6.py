@@ -537,6 +537,70 @@ class SevenZipRarTests(unittest.TestCase):
                                      os.path.join(self.tmp, "один.txt"))
         self.assertFalse(res.errors)  # добавление нового члена — валидный случай
 
+    def test_rar_members_vt_parsing(self):
+        """Размеры членов RAR из `unrar vt` (мок вывода; unrar на машине
+        не установлен — парсер проверяется на реалистичном выводе)."""
+        vt_output = (
+            "Archive: /tmp/x.rar\n"
+            "Details: RAR 5\n"
+            "\n"
+            " Name:        папка/\n"
+            " Type:       Directory\n"
+            " mtime:      2024-01-01 10:00:00,000\n"
+            "\n"
+            " Name:        папка/файл.txt\n"
+            " Type:       File\n"
+            " Size:       1234\n"
+            " Packed size: 1100\n"
+            "\n"
+            " Name:        корень.bin\n"
+            " Type:       File\n"
+            " Size:       99\n"
+        )
+
+        class FakeProc:
+            returncode = 0
+            stdout = vt_output
+            stderr = ""
+
+        def fake_run(*_a, **_kw):
+            return FakeProc()
+
+        with unittest.mock.patch.object(archives, "external_tool",
+                                        return_value="/usr/bin/unrar"), \
+                unittest.mock.patch.object(archives.subprocess, "run",
+                                           fake_run):
+            members = archives._rar_members("/tmp/x.rar")
+        self.assertIn(("папка/", 0, "dir"), members)
+        self.assertIn(("папка/файл.txt", 1234, "file"), members)
+        self.assertIn(("корень.bin", 99, "file"), members)
+
+    def test_rar_members_fallback_names_only(self):
+        """Старый unrar (нет vt): откат на список имён, размеры 0."""
+
+        class FakeVt:
+            returncode = 11
+            stdout = ""
+            stderr = "unsupported command"
+
+        class FakeLb:
+            returncode = 0
+            stdout = "папка/\nфайл.txt\n"
+            stderr = ""
+
+        responses = [FakeVt(), FakeLb()]
+
+        def fake_run(*_a, **_kw):
+            return responses.pop(0)
+
+        with unittest.mock.patch.object(archives, "external_tool",
+                                        return_value="/usr/bin/unrar"), \
+                unittest.mock.patch.object(archives.subprocess, "run",
+                                           fake_run):
+            members = archives._rar_members("/tmp/x.rar")
+        self.assertEqual(members, [("папка/", 0, "dir"),
+                                   ("файл.txt", 0, "file")])
+
     def test_missing_tool_is_graceful(self):
         arc = os.path.join(self.tmp, "ненастоящий.7z")
         with unittest.mock.patch.object(archives, "external_tool",

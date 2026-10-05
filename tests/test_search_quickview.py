@@ -306,6 +306,59 @@ def _make_min_pdf(path: str, word: str) -> None:
         self.assertTrue(any(p.endswith("заметка.docx") for p in hits))
 
 
+    def test_search_inside_odt(self):
+        import os as _os
+        import zipfile as _zipfile
+
+        tmp = tempfile.mkdtemp(prefix="sc_odt_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        content = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<office:document-content '
+            'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+            'xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+            '<office:body><office:text>'
+            '<text:p>Доклад о бабочках</text:p>'
+            '<text:h>Глава первая</text:h>'
+            '</office:text></office:body></office:document-content>')
+        path = _os.path.join(tmp, "доклад.odt")
+        with _zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("content.xml", content)
+        hits = []
+        run_search(tmp, "*.odt", "бабочк", hit_cb=lambda h: hits.append(h))
+        self.assertTrue(hits)
+        self.assertIn("Доклад о бабочках", hits[0].text)
+
+    def test_search_both_roots(self):
+        """Два корня через «|» — механика диалога (слияние статистики)."""
+        import os as _os
+        import unittest.mock
+
+        from sphaera_commander.dialogs import SearchDialog
+
+        left = tempfile.mkdtemp(prefix="sc_rootL_")
+        right = tempfile.mkdtemp(prefix="sc_rootR_")
+        self.addCleanup(shutil.rmtree, left, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, right, ignore_errors=True)
+        for root, name in ((left, "a.txt"), (right, "b.txt")):
+            with open(_os.path.join(root, name), "w", encoding="utf-8") as f:
+                f.write("игла")
+        dlg = SearchDialog(None, left, other_root=right)
+        dlg.attach()
+        dlg.edit_root.setText(left + "|" + right)
+        dlg.edit_mask.setText("*.txt")
+        dlg.edit_text.setText("игла")
+        dlg.start_search()
+        import time as _time
+
+        deadline = _time.time() + 10
+        while _time.time() < deadline and dlg._thread is not None:
+            QApplication.processEvents()
+            _time.sleep(0.02)
+        self.assertEqual(dlg.tree.topLevelItemCount(), 2)
+        dlg.reject()
+
+
 class QuickViewPdfTests(unittest.TestCase):
     """Ctrl+Q на PDF: листание страниц, клики по краям, масштаб."""
 

@@ -595,7 +595,8 @@ class MainWindow(QMainWindow):
             self._inactive_preview().show_entry(self.active.current_entry())
 
     def do_search(self):
-        dlg = SearchDialog(self, self.active.current_path())
+        dlg = SearchDialog(self, self.active.current_path(),
+                           other_root=self._other().current_path())
         dlg.attach()
         dlg.openRequested.connect(self._open_search_hit)
         self._search_dialog = dlg  # держим ссылку, окно немодальное
@@ -988,7 +989,12 @@ class MainWindow(QMainWindow):
             return
         from .dialogs import PropertiesDialog
 
-        dlg = PropertiesDialog(self, entry.path)
+        def apply_async(fn, after):
+            self._enqueue_op(
+                tr("Права: {path}").format(path=entry.path), fn,
+                after=lambda: (self.refresh_all(), after()))
+
+        dlg = PropertiesDialog(self, entry.path, apply_async=apply_async)
         if dlg.exec():
             self.refresh_all()
 

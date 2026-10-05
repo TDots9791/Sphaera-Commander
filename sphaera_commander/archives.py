@@ -358,13 +358,51 @@ def _7z_rewrite(archive_path: str, skip: set[str], replace: dict[str, str],
 
 
 def _rar_members(archive_path: str) -> list[tuple[str, int, str]]:
-    """Список членов RAR: `unrar lb -v` — только имена (без размеров:
-    каталоги-члены с завершающим «/»; размеры 0 — известное ограничение v1)."""
+    """Список членов RAR с размерами: `unrar vt` (блоки «Name:/Size:/Type:»).
+    Старый unrar без vt — откат на `unrar lb` (только имена, размеры 0)."""
     tool = external_tool("rar")
     if tool is None:
         raise ValueError("unrar не установлен — формат RAR недоступен")
     proc = subprocess.run(
-        [tool, "lb", "-v", "--", archive_path],
+        [tool, "vt", "--", archive_path],
+        capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        return _rar_members_names_only(tool, archive_path)
+    out: list[tuple[str, int, str]] = []
+    current: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        line = line.rstrip()
+        if not line.strip():
+            if current.get("name"):
+                out.append(_rar_block_to_member(current))
+            current = {}
+            continue
+        if line.startswith("Archive:") or line.startswith("Details:"):
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip().lower()
+        if key in ("name", "size", "type"):
+            current[key] = value.strip()
+    if current.get("name"):
+        out.append(_rar_block_to_member(current))
+    if not out:
+        return _rar_members_names_only(tool, archive_path)
+    return out
+
+
+def _rar_block_to_member(block: dict[str, str]) -> tuple[str, int, str]:
+    name = block.get("name", "")
+    kind = "file"
+    if block.get("type", "").lower() == "directory" or name.endswith("/"):
+        kind = "dir"
+    return (name, 0 if kind == "dir" else _int_or_0(block.get("size")), kind)
+
+
+def _rar_members_names_only(tool: str, archive_path: str
+                            ) -> list[tuple[str, int, str]]:
+    """Старый unrar: `unrar lb` — только имена (размеры 0)."""
+    proc = subprocess.run(
+        [tool, "lb", "--", archive_path],
         capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         raise OSError(proc.stderr.strip() or "unrar не смог прочитать архив")

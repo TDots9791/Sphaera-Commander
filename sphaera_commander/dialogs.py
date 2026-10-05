@@ -320,7 +320,7 @@ class SearchDialog(QDialog):
     searchDone = Signal()
     MAX_ROWS = 5000
 
-    def __init__(self, parent, root_dir: str):
+    def __init__(self, parent, root_dir: str, other_root: str | None = None):
         super().__init__(parent)
         self.setWindowTitle(tr("Поиск файлов"))
         self.setModal(False)
@@ -330,10 +330,26 @@ class SearchDialog(QDialog):
         self._cancel = threading.Event()
 
         self.edit_root = QLineEdit(root_dir)
+        self.edit_root.setToolTip(
+            tr("Каталог поиска; «путь1|путь2» — обе области сразу"))
         self.edit_mask = QLineEdit("*")
         self.edit_mask.setToolTip(tr("Маски через пробел или ;:  *.py  *.txt;README*"))
         self.edit_text = QLineEdit()
         self.edit_text.setPlaceholderText(tr("пусто — искать только по маске"))
+        self.edit_size = QLineEdit()
+        self.edit_size.setPlaceholderText(tr("например >2М или 1к-5М"))
+        self.edit_dates = QLineEdit()
+        self.edit_dates.setPlaceholderText(
+            tr("даты: 01.01.2024 или 01.01.2024-31.12.2024"))
+        if other_root is not None:
+            self.btn_both = QPushButton(tr("⇄ Обе панели"))
+            self.btn_both.setToolTip(
+                tr("Искать сразу в каталогах обеих панелей (через «|»)"))
+            self.btn_both.clicked.connect(
+                lambda: self.edit_root.setText(
+                    self.root_dir + "|" + other_root
+                    if other_root not in self.edit_root.text()
+                    else self.root_dir))
         self.chk_recursive = QPushButton(tr("Рекурсивно"))
         self.chk_recursive.setCheckable(True)
         self.chk_recursive.setChecked(True)
@@ -351,11 +367,17 @@ class SearchDialog(QDialog):
 
         form = QGridLayout()
         form.addWidget(QLabel(tr("Где:")), 0, 0)
-        form.addWidget(self.edit_root, 0, 1, 1, 3)
+        form.addWidget(self.edit_root, 0, 1, 1, 2)
+        if other_root is not None:
+            form.addWidget(self.btn_both, 0, 3)
         form.addWidget(QLabel(tr("Маска файлов:")), 1, 0)
         form.addWidget(self.edit_mask, 1, 1)
+        form.addWidget(QLabel(tr("Размер:")), 1, 2)
+        form.addWidget(self.edit_size, 1, 3)
         form.addWidget(QLabel(tr("Текст:")), 2, 0)
         form.addWidget(self.edit_text, 2, 1)
+        form.addWidget(QLabel(tr("Изменён:")), 2, 2)
+        form.addWidget(self.edit_dates, 2, 3)
         row = QHBoxLayout()
         row.addWidget(self.chk_recursive)
         row.addWidget(self.chk_case)
@@ -363,7 +385,7 @@ class SearchDialog(QDialog):
         row.addStretch(1)
         row.addWidget(self.btn_stop)
         row.addWidget(self.btn_start)
-        form.addLayout(row, 2, 2, 1, 2)
+        form.addLayout(row, 3, 0, 1, 4)
 
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels((tr("Файл"), tr("Стр."), tr("Совпадение")))
@@ -393,16 +415,54 @@ class SearchDialog(QDialog):
         case = self.chk_case.isChecked()
         regex = self.chk_regex.isChecked()
         recursive = self.chk_recursive.isChecked()
-        root = self.edit_root.text()
+        roots = [r.strip() for r in self.edit_root.text().split("|")
+                 if r.strip()] or ["."]
+        try:
+            size_range = searcher.parse_size_filter(self.edit_size.text())
+        except ValueError:
+            self.lbl_status.setText(tr("Неверный размер: {text}").format(
+                text=self.edit_size.text()))
+            self.btn_start.setEnabled(True)
+            self.btn_stop.setEnabled(False)
+            return
+        dates_text = self.edit_dates.text()
+        try:
+            if dates_text.strip():
+                date_range = searcher.parse_date_filter(dates_text, "")
+            else:
+                date_range = (0.0, 0.0)
+        except ValueError:
+            self.lbl_status.setText(tr("Неверные даты: {text}").format(
+                text=dates_text))
+            self.btn_start.setEnabled(True)
+            self.btn_stop.setEnabled(False)
+            return
 
         def worker():
-            stats = searcher.run_search(
-                root, masks, needle, recursive=recursive,
-                case_sensitive=case, use_regex=regex,
-                hit_cb=lambda h: self.hitArrived.emit(h),
-                progress_cb=lambda s: self.statusChanged.emit(s.summary()),
-                is_cancelled=self._cancel.is_set)
-            self.statusChanged.emit(stats.summary())
+            from .searcher import SearchStats
+
+            total = SearchStats()
+            for index, root in enumerate(roots):
+                if self._cancel.is_set():
+                    total.cancelled = True
+                    break
+                stats = searcher.run_search(
+                    root, masks, needle, recursive=recursive,
+                    case_sensitive=case, use_regex=regex,
+                    size_range=size_range, date_range=date_range,
+                    hit_cb=lambda h: self.hitArrived.emit(h),
+                    progress_cb=lambda s: self.statusChanged.emit(s.summary()),
+                    is_cancelled=self._cancel.is_set)
+                total.files_seen += stats.files_seen
+                total.files_scanned += stats.files_scanned
+                total.files_matched += stats.files_matched
+                total.skipped_binary += stats.skipped_binary
+                total.skipped_large += stats.skipped_large
+                total.hits += stats.hits
+                total.errors.extend(stats.errors)
+                if stats.cancelled:
+                    total.cancelled = True
+            self.statusChanged.emit(total.summary())
             self.searchDone.emit()
 
         self._thread = threading.Thread(target=worker, daemon=True,
@@ -783,12 +843,15 @@ class PropertiesDialog(QDialog):
 
     permissionsApplied = Signal(str)
 
-    def __init__(self, parent, path: str):
+    def __init__(self, parent, path: str, apply_async=None):
         super().__init__(parent)
         from .fsmodel import (entry_details, human_size, mode_string,
                               permission_bits)
 
         self.path = path
+        # apply_async(fn, after) — рекурсивное применение через очередь
+        # операций приложения (фон, прогресс, отмена); None — синхронно
+        self._apply_async = apply_async
         self.setWindowTitle(tr("Свойства: {name}").format(
             name=os.path.basename(path) or path))
         self.resize(560, 520)
@@ -865,6 +928,43 @@ class PropertiesDialog(QDialog):
             bits[idx] = box.isChecked()
         mode = bits_to_mode(tuple(bits), self._details["mode"])
         recursive = self.recursive.isChecked()
+        if recursive and self._apply_async is not None:
+            # большое дерево не должно висеть в GUI-потоке
+            path = self.path
+
+            def fn(progress_cb, is_cancelled):
+                from sphaera_commander.fsmodel import DirStats
+                from sphaera_commander.ops import FileError, OpResult, Progress
+
+                result = OpResult()
+                set_permissions(path, mode)
+                result.done_files += 1
+                total = 0
+                for dirpath, dirnames, filenames in os.walk(path):
+                    total += len(dirnames) + len(filenames)
+                done = 0
+                for dirpath, dirnames, filenames in os.walk(path):
+                    if is_cancelled():
+                        result.cancelled = True
+                        return result
+                    for name in dirnames + filenames:
+                        try:
+                            set_permissions(os.path.join(dirpath, name), mode)
+                            result.done_files += 1
+                        except OSError as exc:
+                            result.errors.append(
+                                FileError(os.path.join(dirpath, name),
+                                          str(exc)))
+                        done += 1
+                        if progress_cb is not None and done % 25 == 0:
+                            progress_cb(Progress(
+                                phase="run", current=dirpath, done_files=done,
+                                total_files=total,
+                                done_bytes=0, total_bytes=0))
+                return result
+
+            self._apply_async(fn, self.accept)
+            return
         try:
             set_permissions(self.path, mode)
             if recursive:

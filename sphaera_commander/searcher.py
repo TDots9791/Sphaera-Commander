@@ -23,7 +23,8 @@ MAX_FILE_SIZE = 32 * 1024 * 1024   # файлы больше не сканиру
 PROGRESS_EVERY_FILES = 25
 
 # форматные документы, в которых ищем извлечённый текст
-DOC_TEXT_EXTS = (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".fb2")
+DOC_TEXT_EXTS = (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".fb2",
+                 ".odt", ".ods", ".odp")
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,31 @@ def parse_date_bound(text: str, end_of_day: bool) -> float:
     raise ValueError(text)
 
 
+def odf_text(path: str) -> str:
+    """Текст OpenDocument (odt/ods/odp): content.xml, по абзацам.
+
+    Свои силы: zipfile + ElementTree; текст элементов text:p/text:h
+    (ячейки таблиц идут своими абзацами).
+    """
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    TEXT_NS = "urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+    with zipfile.ZipFile(path) as zf:
+        content = zf.read("content.xml")
+    root = ET.fromstring(content)
+    paragraphs = []
+    for el in root.iter():
+        tag = el.tag.rsplit("}", 1)[-1]
+        if tag in ("p", "h"):
+            text = "".join(el.itertext()).strip()
+            if text:
+                paragraphs.append(text)
+    if not paragraphs:  # вырожденный документ — весь текст одним куском
+        return " ".join(root.itertext())
+    return "\n".join(paragraphs)
+
+
 def doc_text(path: str) -> str:
     """Извлечь текст форматного документа своими движками (для поиска)."""
     from . import previewers as pv
@@ -137,6 +163,8 @@ def doc_text(path: str) -> str:
     if ext == ".fb2":
         _title, html = pv.fb2_html(path)
         return re.sub(r"<[^>]+>", " ", html)
+    if ext in (".odt", ".ods", ".odp"):
+        return odf_text(path)
     raise ValueError(ext)
 
 
