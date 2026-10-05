@@ -39,17 +39,23 @@ class DuplicatesDialog(QDialog):
     groupReady = Signal(list)   # [(путь, размер)] — одна группа дубликатов
     scanDone = Signal(int, int)  # групп, «пустых» байт
 
-    def __init__(self, parent, root: str):
+    def __init__(self, parent, root: str, root2: str | None = None):
         super().__init__(parent)
         self.app = parent
+        self.roots = [root] + ([root2] if root2 else [])
         self.root = root
-        self.setWindowTitle(tr("Поиск дубликатов: {name}").format(
-            name=os.path.basename(root) or root))
+        titles = (tr("Файл"), tr("Размер"), tr("Группа"))
+        title = tr("Поиск дубликатов: {name}").format(
+            name=os.path.basename(root) or root)
+        if root2:
+            title = tr("Дубликаты между панелями")
+            titles = (tr("Файл"), tr("Размер"), tr("Группа"), tr("Панель"))
+        self.setWindowTitle(title)
         self.resize(880, 560)
+        self._columns = 3 if root2 is None else 4
 
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(
-            (tr("Файл"), tr("Размер"), tr("Группа")))
+        self.table = QTableWidget(0, self._columns)
+        self.table.setHorizontalHeaderLabels(titles)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView_stretch())
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.ExtendedSelection)
@@ -81,42 +87,54 @@ class DuplicatesDialog(QDialog):
                          name="duplicates").start()
 
     def _scan(self) -> None:
-        by_size: dict[int, list[str]] = {}
-        for dirpath, _dirs, files in os.walk(self.root):
-            for name in files:
-                if self._cancel.is_set():
-                    return
-                path = os.path.join(dirpath, name)
-                try:
-                    by_size.setdefault(os.path.getsize(path), []).append(path)
-                except OSError:
-                    continue
+        two = len(self.roots) == 2
+        by_hash: dict[str, list[tuple[int, str, str]]] = {}
+        total_files = 0
+        for idx, root in enumerate(self.roots):
+            tag = "A" if idx == 0 else "B"
+            for dirpath, _dirs, files in os.walk(root):
+                for name in files:
+                    if self._cancel.is_set():
+                        return
+                    path = os.path.join(dirpath, name)
+                    try:
+                        size = os.path.getsize(path)
+                    except OSError:
+                        continue
+                    if size == 0:
+                        continue
+                    total_files += 1
+                    try:
+                        digest = _sha256(path)
+                    except OSError:
+                        continue
+                    by_hash.setdefault(digest, []).append((size, path, tag))
         groups = wasted = 0
-        for size, paths in sorted(by_size.items(), reverse=True):
-            if size == 0 or len(paths) < 2:
+        for digest, items in by_hash.items():
+            if two:
+                tags = {t for _s, _p, t in items}
+                if tags != {"A", "B"}:
+                    continue
+            if len(items) < 2:
                 continue
-            by_hash: dict[str, list[str]] = {}
-            for path in paths:
-                try:
-                    by_hash.setdefault(_sha256(path), []).append(path)
-                except OSError:
-                    continue
-            for paths_same in by_hash.values():
-                if len(paths_same) < 2:
-                    continue
-                groups += 1
-                wasted += size * (len(paths_same) - 1)
-                self.groupReady.emit([(p, size) for p in paths_same])
+            size = items[0][0]
+            groups += 1
+            wasted += size * (len(items) - 1)
+            self.groupReady.emit([(p, s, t) for s, p, t in items])
         self.scanDone.emit(groups, wasted)
 
     def _on_group(self, items):
         self._group_no = getattr(self, "_group_no", 0) + 1
-        for path, size in items:
+        for item in items:
+            path, size = item[0], item[1]
+            tag = item[2] if len(item) > 2 else ""
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(path))
             self.table.setItem(row, 1, QTableWidgetItem(human_size(size)))
             self.table.setItem(row, 2, QTableWidgetItem(f"#{self._group_no}"))
+            if self._columns == 4:
+                self.table.setItem(row, 3, QTableWidgetItem(tag))
 
     def _on_done(self, groups: int, wasted: int):
         self.status.setText(tr("Групп дубликатов: {g}, лишнего: {w}").format(
@@ -176,7 +194,8 @@ class Plugin(SphaeraPlugin):
     title = "Поиск дубликатов"
 
     def tools_actions(self):
-        return [(tr("Поиск дубликатов…"), self._open, None)]
+        return [(tr("Поиск дубликатов…"), self._open, None),
+                (tr("Дубликаты между панелями…"), self._open_two, None)]
 
     def context_actions(self, panel, entry):
         if entry is not None and entry.is_dir:
@@ -186,6 +205,19 @@ class Plugin(SphaeraPlugin):
 
     def _open(self):
         self._open_dir(self.app.active.current_path())
+
+    def _open_two(self):
+        if self.app.left.is_vfs or self.app.right.is_vfs:
+            self.app._status(tr("Сравнение каталогов работает для обычных каталогов"))
+            return
+        dlg = DuplicatesDialog(self.app,
+                               self.app.left.current_path(),
+                               self.app.right.current_path())
+        dlg.setModal(False)
+        dlg.show()
+        if not hasattr(self.app, "_plugin_dialogs"):
+            self.app._plugin_dialogs = []
+        self.app._plugin_dialogs.append(dlg)
 
     def _open_dir(self, directory: str):
         dlg = DuplicatesDialog(self.app, directory)

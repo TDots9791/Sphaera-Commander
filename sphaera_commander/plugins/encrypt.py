@@ -28,6 +28,50 @@ def gpg_bin() -> str | None:
     return shutil.which("gpg")
 
 
+AGE_KEY_FILE = os.path.expanduser(
+    "~/.config/sphaera-commander/age.key")
+
+
+def age_bin() -> str | None:
+    return shutil.which("age")
+
+
+def age_keygen_bin() -> str | None:
+    return shutil.which("age-keygen")
+
+
+def age_public_key() -> str | None:
+    """Публичный ключ из файла идентичности (строка age1...)."""
+    try:
+        with open(AGE_KEY_FILE, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("age1"):
+                    return line
+    except OSError:
+        pass
+    return None
+
+
+def create_age_key() -> str | None:
+    """age-keygen → файл идентичности; вернуть публичный ключ или None."""
+    keygen = age_keygen_bin()
+    if keygen is None:
+        return None
+    os.makedirs(os.path.dirname(AGE_KEY_FILE), exist_ok=True)
+    proc = subprocess.run([keygen, "-o", AGE_KEY_FILE],
+                          capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        return None
+    return age_public_key()
+
+
+def _run_age(args: list[str]) -> tuple[int, str]:
+    proc = subprocess.run(["age"] + args, capture_output=True,
+                          text=True, timeout=600)
+    return proc.returncode, (proc.stderr or "").strip()
+
+
 def _run_gpg(args: list[str], passphrase: str) -> tuple[int, str]:
     proc = subprocess.run(
         ["gpg", "--batch", "--yes", "--passphrase-fd", "0"] + args,
@@ -152,12 +196,97 @@ def QTimer_singleShot_close(dialog):
     QTimer.singleShot(900, dialog.accept)
 
 
+class AgeDialog(QDialog):
+    """Шифрование/расшифровка по ключу age (без парольных фраз)."""
+
+    def __init__(self, parent, files: list[str], decrypt: bool):
+        super().__init__(parent)
+        self.app = parent
+        self.files = files
+        self.decrypt = decrypt
+        self.setWindowTitle("age")
+        self.resize(520, 160)
+        pubkey = age_public_key()
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(tr(
+            "Ключ: {key}").format(key=pubkey or tr("не создан"))))
+        self.status = QLabel("")
+        btn = QPushButton(tr("Выполнить"))
+        btn.clicked.connect(self._run)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(btn)
+        row.addWidget(QPushButton(tr("Отмена"), clicked=self.reject))
+        layout.addWidget(self.status)
+        layout.addLayout(row)
+
+    def _targets(self) -> list[tuple[str, str]]:
+        out = []
+        for path in self.files:
+            if self.decrypt:
+                if path.endswith(".age"):
+                    target = path[:-4]
+                    if os.path.exists(target):
+                        target += ".dec"
+                    out.append((path, target))
+            else:
+                out.append((path, path + ".age"))
+        return out
+
+    def _run(self):
+        if age_bin() is None:
+            self.status.setText(tr("age не установлен (sudo dnf install age)"))
+            return
+        pubkey = age_public_key()
+        if pubkey is None:
+            self.status.setText(tr("Ключ age не создан (age-keygen)"))
+            return
+        identity = AGE_KEY_FILE
+        targets = self._targets()
+        if not targets:
+            self.status.setText(tr("Нет подходящих файлов"))
+            return
+        args_for = []
+        for src, dst in targets:
+            if self.decrypt:
+                args_for.append((["-d", "-i", identity, "-o", dst, src], src, dst))
+            else:
+                args_for.append((["-r", pubkey, "-o", dst, src], src, dst))
+
+        def worker():
+            failures = []
+            for args, src, dst in args_for:
+                rc, err = _run_age(args)
+                if rc != 0:
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    failures.append(f"{os.path.basename(src)}: "
+                                    + (err.splitlines() or [""])[-1])
+            self.app.gui_call.emit(
+                lambda: self.status.setText(
+                    tr("Готово: {ok}, с ошибками: {n}").format(
+                        ok=len(targets) - len(failures), n=len(failures))))
+
+        self.status.setText(tr("Работаю…"))
+        threading.Thread(target=worker, daemon=True, name="age").start()
+
+
 class Plugin(SphaeraPlugin):
     id = "encrypt"
     title = "Шифрование (gpg)"
 
     def tools_actions(self):
-        return [(tr("Зашифровать/расшифровать…"), self._open, None)]
+        actions = [(tr("Зашифровать/расшифровать…"), self._open, None)]
+        if age_bin() is not None:
+            actions.append((tr("Создать ключ age"), self._age_keygen, None))
+        return actions
+
+    def _age_keygen(self):
+        pubkey = create_age_key()
+        if pubkey is None:
+            self.app._status(tr("age не установлен (sudo dnf install age)"))
+            return
+        self.app._status(tr("Ключ age создан: {key}").format(key=pubkey))
 
     def context_actions(self, panel, entry):
         files = [e for e in panel.selected_entries() if not e.is_dir]
@@ -175,6 +304,11 @@ class Plugin(SphaeraPlugin):
         panel = self.app.active
         files = [e.path for e in panel.selected_entries() if not e.is_dir]
         if not files:
+            return
+        if decrypt and age_bin() is not None \
+                and all(p.endswith(".age") for p in files):
+            dlg = AgeDialog(self.app, files, decrypt=True)
+            dlg.exec()
             return
         if gpg_bin() is None:
             self.app._status(tr("gpg не найден (sudo dnf install gnupg2)"))
