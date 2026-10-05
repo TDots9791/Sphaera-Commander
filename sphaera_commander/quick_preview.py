@@ -1,10 +1,11 @@
 """Быстрая панель просмотра (Ctrl+Q): вторая панель показывает содержимое
 файла под курсором активной панели — как Quick View в Total Commander.
 
-Поддержка: текст (с кодировками), md (рендер), html, pdf (первая страница),
-docx (HTML), doc/rtf (текст через antiword/striprtf), pptx (первый слайд
-своим рендером), fb2, epub (глава 1), картинки; остальное — сведения о файле
-и подсказка про F3.
+Поддержка: текст (с кодировками), md (рендер), html, pdf (все страницы —
+кнопки ‹ › или клик по краю страницы; масштаб — колесо с Ctrl или щипок),
+docx (HTML), doc/rtf (текст через antiword/striprtf), pptx (слайды своим
+рендером, листается), fb2, epub (глава 1), картинки; остальное — сведения
+о файле и подсказка про F3.
 """
 
 from __future__ import annotations
@@ -13,13 +14,15 @@ import os
 import tempfile
 from html import escape
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, Qt, QTimer, QUrl
 from PySide6.QtGui import QFont, QImage, QPixmap, QFontDatabase
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
     QScrollArea,
     QStackedWidget,
     QTextBrowser,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -34,6 +37,7 @@ from .viewer import looks_binary
 
 PREVIEW_TEXT_LIMIT = 1 * 1024 * 1024
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico")
+PDF_SCALE_MIN, PDF_SCALE_MAX = 0.25, 6.0
 
 
 class QuickPreview(QWidget):
@@ -42,6 +46,13 @@ class QuickPreview(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pending: FileEntry | None = None
+        # состояние листания/масштаба документа (pdf/pptx)
+        self._doc_path = ""
+        self._doc_index = 0
+        self._doc_count = 0
+        self._doc_scale = 1.5
+        self._doc_kind = ""  # "" | "pdf" | "pptx"
+        self._deck: dict | None = None
 
         self._info = QLabel(tr("Быстрый просмотр (Ctrl+Q)"))
         self._info.setWordWrap(True)
@@ -56,24 +67,152 @@ class QuickPreview(QWidget):
         self._image.setAlignment(Qt.AlignCenter)
         self._pdf_page = QLabel()
         self._pdf_page.setAlignment(Qt.AlignCenter)
-        pdf_scroll = QScrollArea()
-        pdf_scroll.setWidgetResizable(True)
-        pdf_scroll.setWidget(self._pdf_page)
+        self._pdf_scroll = QScrollArea()
+        self._pdf_scroll.setWidgetResizable(True)
+        self._pdf_scroll.setWidget(self._pdf_page)
+        self._pdf_scroll.viewport().installEventFilter(self)
+        self._pdf_page.installEventFilter(self)
 
         self._stack.addWidget(self._page_info)   # 0
         self._stack.addWidget(self._browser)     # 1
         self._stack.addWidget(self._image)       # 2
-        self._stack.addWidget(pdf_scroll)        # 3
+        self._stack.addWidget(self._pdf_scroll)  # 3
+
+        # -- навигация по страницам/слайдам
+        self._btn_prev = QToolButton()
+        self._btn_prev.setText("◀")
+        self._btn_prev.setAutoRaise(True)
+        self._btn_prev.setToolTip(tr("Предыдущая страница"))
+        self._btn_prev.clicked.connect(lambda: self._doc_navigate(-1))
+        self._btn_next = QToolButton()
+        self._btn_next.setText("▶")
+        self._btn_next.setAutoRaise(True)
+        self._btn_next.setToolTip(tr("Следующая страница"))
+        self._btn_next.clicked.connect(lambda: self._doc_navigate(1))
+        self._doc_pos = QLabel("")
+        self._doc_pos.setAlignment(Qt.AlignCenter)
+        nav = QHBoxLayout()
+        nav.setContentsMargins(0, 0, 0, 0)
+        nav.addWidget(self._btn_prev)
+        nav.addWidget(self._doc_pos, 1)
+        nav.addWidget(self._btn_next)
+        self._doc_nav = QWidget()
+        self._doc_nav.setLayout(nav)
+        self._doc_nav.hide()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.addWidget(self._stack, 1)
+        layout.addWidget(self._doc_nav)
         layout.addWidget(self._info)
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(200)
         self._debounce.timeout.connect(self._load_pending)
+
+    # -- события мыши/жестов -------------------------------------------------
+
+    def eventFilter(self, obj, ev):
+        t = ev.type()
+        if t == QEvent.Wheel and obj is self._pdf_scroll.viewport():
+            if self._doc_kind and (ev.modifiers() & Qt.ControlModifier):
+                factor = 1.1 if ev.angleDelta().y() > 0 else 1 / 1.1
+                self._doc_zoom(factor)
+                return True
+            return False
+        if t == QEvent.NativeGesture and self._doc_kind:
+            # тачпад: щипок приходит жестом Zoom (Wayland) или колесом с Ctrl
+            try:
+                if ev.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                    self._doc_zoom(1.0 + ev.value())
+                    return True
+            except AttributeError:
+                pass
+            return False
+        if t == QEvent.MouseButtonRelease and obj is self._pdf_page:
+            # клик по левой/правой трети страницы — листать (как читалки)
+            if self._doc_kind and self._doc_count > 1:
+                x = ev.position().toPoint().x()
+                if x < self._pdf_page.width() / 3:
+                    self._doc_navigate(-1)
+                elif x > self._pdf_page.width() * 2 / 3:
+                    self._doc_navigate(1)
+        return super().eventFilter(obj, ev)
+
+    # -- листание/масштаб ----------------------------------------------------
+
+    def _doc_reset(self, path: str, count: int, kind: str) -> None:
+        self._doc_path = path
+        self._doc_index = 0
+        self._doc_count = count
+        self._doc_kind = kind
+        self._doc_nav.setVisible(count > 1)
+        self._btn_prev.setEnabled(False)
+        self._btn_next.setEnabled(count > 1)
+
+    def _doc_info(self, name: str) -> None:
+        """Строка-статус под документом (синхронно с листанием)."""
+        if self._doc_kind == "pdf":
+            self._info.setText(
+                tr("{name} • стр. {n} из {count} • F3 — все страницы").format(
+                    name=name, n=self._doc_index + 1, count=self._doc_count))
+        else:
+            self._info.setText(
+                tr("{name} • слайд {n} из {count} • F3").format(
+                    name=name, n=self._doc_index + 1, count=self._doc_count))
+
+    def _doc_navigate(self, delta: int) -> None:
+        if not self._doc_kind:
+            return
+        new_index = self._doc_index + delta
+        if not 0 <= new_index < self._doc_count:
+            return
+        self._doc_index = new_index
+        self._doc_show()
+
+    def _doc_zoom(self, factor: float) -> None:
+        if not self._doc_kind:
+            return
+        self._doc_scale = max(PDF_SCALE_MIN,
+                              min(PDF_SCALE_MAX, self._doc_scale * factor))
+        self._doc_show()
+
+    def _fit_scale(self, width_pt: float) -> float:
+        """Масштаб «по ширине панели» (в пунктах PDF)."""
+        viewport = max(80, self._pdf_scroll.viewport().width() - 8)
+        return max(PDF_SCALE_MIN, min(PDF_SCALE_MAX, viewport / max(1.0, width_pt)))
+
+    def _doc_show(self) -> None:
+        """Отрисовать текущую страницу/слайд с текущим масштабом."""
+        name = os.path.basename(self._doc_path)
+        if self._doc_kind == "pdf":
+            data, w, h, stride = pv.pdf_render(self._doc_path, self._doc_index,
+                                               self._doc_scale)
+            img = QImage(data, w, h, stride, QImage.Format.Format_BGR888)
+            self._pdf_page.setPixmap(QPixmap.fromImage(img.copy()))
+            try:
+                w_pt, _h = pv.pdf_page_size(self._doc_path, self._doc_index)
+            except Exception:
+                w_pt = w / max(0.01, self._doc_scale)
+            self._doc_pos.setText(
+                tr("стр. {n} из {total} • {scale:.0f}%").format(
+                    n=self._doc_index + 1, total=self._doc_count,
+                    scale=self._doc_scale * 100))
+            self._btn_prev.setEnabled(self._doc_index > 0)
+            self._btn_next.setEnabled(self._doc_index < self._doc_count - 1)
+        else:  # pptx
+            pixmap = slide_render.render_slide(
+                self._deck, self._deck["slides"][self._doc_index],
+                self._doc_scale)
+            self._pdf_page.setPixmap(pixmap)
+            self._doc_pos.setText(
+                tr("слайд {n} из {total}").format(
+                    n=self._doc_index + 1, total=self._doc_count))
+            self._btn_prev.setEnabled(self._doc_index > 0)
+            self._btn_next.setEnabled(self._doc_index < self._doc_count - 1)
+        self._pdf_page.adjustSize()
+        self._doc_info(name)
 
     def show_entry(self, entry: FileEntry | None) -> None:
         self._pending = entry
@@ -94,23 +233,34 @@ class QuickPreview(QWidget):
 
     def _load(self, entry: FileEntry | None) -> None:
         if entry is None or entry.is_dir:
+            self._doc_kind = ""
+            self._doc_nav.hide()
             self._page(tr("Каталог.\n(Enter — перейти, F3 — открыть файл)"))
             self._info.setText("")
             return
         path = entry.path
         ext = os.path.splitext(path)[1].lower()
         kind = pv.document_kind(path)
+        self._doc_kind = ""
+        self._doc_nav.hide()
         # каждая загрузка начинает с чистого (пропорционального) шрифта:
         # моноширинный после DOC не должен жить в docx/html/epub
         self._browser.document().setDefaultFont(QFont())
 
         if kind == "pdf":
             count = pv.pdf_page_count(path)
-            data, w, h, stride = pv.pdf_render(path, 0, scale=1.5)
-            img = QImage(data, w, h, stride, QImage.Format.Format_BGR888)
-            self._show_pixmap(QPixmap.fromImage(img.copy()))
-            self._info.setText(
-                tr("{name} • PDF: страница 1 из {count} • F3 — все страницы").format(name=entry.name, count=count))
+            self._doc_reset(path, count, "pdf")
+            try:
+                w_pt, _h = pv.pdf_page_size(path, 0)
+                self._doc_scale = self._fit_scale(w_pt)
+            except Exception:
+                self._doc_scale = 1.5
+            self._doc_show()
+            self._stack.setCurrentIndex(3)
+            self._info.setText(tr("{name} • стр. {n} из {count} • F3 — все страницы").format(
+                name=entry.name, n=self._doc_index + 1, count=count))
+            self._doc_nav.setToolTip(
+                tr("Листание: кнопки или клик по краю страницы. Масштаб: колесо с Ctrl или щипок на тачпаде."))
             return
         if kind == "docx":
             self._set_html(pv.docx_to_html(path))
@@ -133,9 +283,16 @@ class QuickPreview(QWidget):
             os.makedirs(images_dir, exist_ok=True)
             deck = pv.pptx_slides_rich(path, images_dir)
             if deck["slides"]:
-                pixmap = slide_render.render_slide(deck, deck["slides"][0], 1.0)
-                self._show_pixmap(pixmap)
-                self._info.setText(tr("{name} • слайд 1 из {count} • F3").format(name=entry.name, count=len(deck["slides"])))
+                self._deck = deck
+                self._doc_reset(path, len(deck["slides"]), "pptx")
+                base = slide_render.render_slide(
+                    deck, deck["slides"][0], 1.0)
+                self._doc_scale = self._fit_scale(
+                    base.width())  # пиксели при 1.0 — пропорция та же
+                self._doc_show()
+                self._stack.setCurrentIndex(3)
+                self._info.setText(tr("{name} • слайд {n} из {count} • F3").format(
+                    name=entry.name, n=self._doc_index + 1, count=len(deck["slides"])))
             return
         if ext in IMAGE_EXTS:
             img = QImage(path)
@@ -194,8 +351,3 @@ class QuickPreview(QWidget):
                             Qt.SmoothTransformation)
         self._image.setPixmap(QPixmap.fromImage(scaled))
         self._stack.setCurrentIndex(2)
-
-    def _show_pixmap(self, pixmap: QPixmap) -> None:
-        self._pdf_page.setPixmap(pixmap)
-        self._pdf_page.adjustSize()
-        self._stack.setCurrentIndex(3)

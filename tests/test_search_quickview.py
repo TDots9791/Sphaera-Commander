@@ -197,6 +197,154 @@ class QuickViewTests(unittest.TestCase):
         raise AssertionError(f"предпросмотр не показал {needle!r}")
 
 
+def _make_two_page_pdf(path: str) -> None:
+    """Двухстраничный PDF из двух одностраничных (текст на второй странице
+    другой, чтобы рендер страниц гарантированно различался)."""
+    from pypdf import PdfReader, PdfWriter
+
+    from sphaera_commander import previewers as _pv
+
+    tmp = tempfile.mkdtemp(prefix="sc_qp_pages_")
+    try:
+        one = os.path.join(tmp, "1.pdf")
+        two = os.path.join(tmp, "2.pdf")
+        _make_min_pdf(one, "AAAA")
+        _make_min_pdf(two, "BBBB")
+        writer = PdfWriter()
+        for src in (one, two):
+            for page in PdfReader(src).pages:
+                writer.add_page(page)
+        with open(path, "wb") as f:
+            writer.write(f)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _make_min_pdf(path: str, word: str) -> None:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from tests.test_documents import make_pdf as _make
+
+    _make(path, [word])
+
+
+class QuickViewPdfTests(unittest.TestCase):
+    """Ctrl+Q на PDF: листание страниц, клики по краям, масштаб."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sc_qp_pdf_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _entry(self, name: str):
+        from sphaera_commander.fsmodel import FileEntry
+
+        path = os.path.join(self.tmp, name)
+        stt = os.stat(path)
+        return FileEntry(name=name, path=path, is_dir=False, is_link=False,
+                         size=stt.st_size, mtime=stt.st_mtime, mode=stt.st_mode)
+
+    def _load(self, name: str):
+        from sphaera_commander.quick_preview import QuickPreview
+
+        qp = QuickPreview()
+        qp.resize(800, 600)
+        qp.show_entry(self._entry(name))
+        qp._debounce.stop()
+        qp._load_pending()
+        return qp
+
+    def test_pdf_pages_navigate(self):
+        from sphaera_commander.quick_preview import QuickPreview
+
+        _make_two_page_pdf(os.path.join(self.tmp, "two.pdf"))
+        qp = self._load("two.pdf")
+        self.assertEqual(qp._doc_kind, "pdf")
+        self.assertEqual(qp._doc_count, 2)
+        self.assertIn("стр. 1 из 2", qp._info.text())
+        self.assertFalse(qp._btn_prev.isEnabled())
+        self.assertTrue(qp._btn_next.isEnabled())
+        qp._btn_next.click()
+        self.assertEqual(qp._doc_index, 1)
+        self.assertIn("стр. 2 из 2", qp._info.text())  # статус листается тоже
+        self.assertFalse(qp._btn_next.isEnabled())
+        self.assertTrue(qp._btn_prev.isEnabled())
+        qp._doc_navigate(-1)
+        self.assertEqual(qp._doc_index, 0)
+        qp.deleteLater()
+
+    def test_pdf_single_page_hides_nav(self):
+        _make_min_pdf(os.path.join(self.tmp, "solo.pdf"), "One")
+        qp = self._load("solo.pdf")
+        self.assertEqual(qp._doc_count, 1)
+        self.assertTrue(qp._doc_nav.isHidden())
+        qp.deleteLater()
+
+    def test_pdf_click_edges_page(self):
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+
+        _make_two_page_pdf(os.path.join(self.tmp, "two.pdf"))
+        qp = self._load("two.pdf")
+
+        def click(x):
+            ev = QMouseEvent(QEvent.Type.MouseButtonRelease, QPointF(x, 5),
+                             Qt.MouseButton.LeftButton,
+                             Qt.MouseButton.NoButton,
+                             Qt.KeyboardModifier.NoModifier)
+            qp.eventFilter(qp._pdf_page, ev)
+
+        click(qp._pdf_page.width() * 0.9)
+        self.assertEqual(qp._doc_index, 1)
+        click(qp._pdf_page.width() * 0.1)
+        self.assertEqual(qp._doc_index, 0)
+        qp.deleteLater()
+
+    def test_pdf_zoom_changes_render(self):
+        _make_two_page_pdf(os.path.join(self.tmp, "two.pdf"))
+        qp = self._load("two.pdf")
+        before = qp._pdf_page.pixmap().size().width()
+        qp._doc_zoom(1.25)
+        after = qp._pdf_page.pixmap().size().width()
+        self.assertGreater(after, before)
+        self.assertIn("стр. 1 из 2", qp._doc_pos.text())
+        qp._doc_zoom(1 / 1.25)
+        self.assertAlmostEqual(qp._pdf_page.pixmap().size().width(), before,
+                               delta=2)
+        qp.deleteLater()
+
+    def test_viewer_ctrl_wheel_zooms_pdf(self):
+        from PySide6.QtCore import QPoint, QPointF, Qt
+        from PySide6.QtGui import QWheelEvent
+
+        from sphaera_commander.viewer import FileViewerDialog
+
+        _make_two_page_pdf(os.path.join(self.tmp, "two.pdf"))
+        dlg = FileViewerDialog(None, [os.path.join(self.tmp, "two.pdf")], 0,
+                               editable=False)
+        base = dlg._pdf_scale
+
+        def wheel(dy: int, ctrl: bool):
+            mod = (Qt.KeyboardModifier.ControlModifier if ctrl
+                   else Qt.KeyboardModifier.NoModifier)
+            ev = QWheelEvent(QPointF(5, 5), QPointF(5, 5), QPoint(0, dy),
+                             QPoint(0, dy), Qt.MouseButton.NoButton, mod,
+                             Qt.ScrollPhase.NoScrollPhase, False)
+            dlg.eventFilter(dlg.pdf_scroll.viewport(), ev)
+
+        wheel(120, ctrl=True)
+        self.assertGreater(dlg._pdf_scale, base)
+        wheel(-120, ctrl=True)
+        self.assertAlmostEqual(dlg._pdf_scale, base, delta=1e-9)
+        wheel(120, ctrl=False)  # обычное колесо — прокрутка, не зум
+        self.assertAlmostEqual(dlg._pdf_scale, base, delta=1e-9)
+        dlg.reject()
+
+
 class QuickViewLegacyTests(unittest.TestCase):
     """Ctrl+Q: doc и rtf показывают текст, а не «бинарный файл»."""
 

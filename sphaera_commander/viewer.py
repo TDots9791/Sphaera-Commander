@@ -12,7 +12,8 @@ JSON: подсветка синтаксиса, форматирование (Ctr
 явный вопрос. Ctrl+E — открыть файл во внешнем приложении.
 Бинарные: hex-обзор (первые 2 МиБ). Изображения: масштабируемый просмотр.
 PDF в правке: аннотации (подсветка, заметка, текст на странице) + список
-с удалением; рендер с аннотациями (draw_annots).
+с удалением; рендер с аннотациями (draw_annots); масштаб страницы —
+колесо с Ctrl или щипок на тачпаде (и для pptx).
 XLSX в правке: редактируемая сетка с формулами — свой движок пересчёта
 (formulas.py, ~50 функций, межлистовые ссылки, детекция циклов); Ctrl+S
 сохраняет формулы и вписывает кэшированные значения (openpyxl их не пишет),
@@ -32,6 +33,7 @@ import xml.etree.ElementTree as ET
 from html import escape
 
 from PySide6.QtCore import (
+    QEvent,
     QRect,
     QAbstractTableModel,
     QModelIndex,
@@ -618,6 +620,7 @@ class FileViewerDialog(QDialog):
         self.pdf_scroll = QScrollArea()
         self.pdf_scroll.setWidgetResizable(True)
         self.pdf_scroll.setWidget(self.pdf_label)
+        self.pdf_scroll.viewport().installEventFilter(self)
         self.pdf_text = QPlainTextEdit()
         self.pdf_text.setReadOnly(True)
         self.pdf_inner = QStackedWidget()
@@ -825,6 +828,23 @@ class FileViewerDialog(QDialog):
         if self._goto_on_load > 1:
             self._goto_line(self._goto_on_load)
             self._goto_on_load = 0
+
+    def eventFilter(self, obj, ev):
+        # масштаб страницы pdf/pptx: колесо с Ctrl или щипок на тачпаде
+        if obj is self.pdf_scroll.viewport():
+            t = ev.type()
+            if t == QEvent.Wheel and self.kind in ("pdf", "pptx") \
+                    and (ev.modifiers() & Qt.ControlModifier):
+                self._pdf_zoom(1.1 if ev.angleDelta().y() > 0 else 1 / 1.1)
+                return True
+            if t == QEvent.NativeGesture and self.kind in ("pdf", "pptx"):
+                try:
+                    if ev.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                        self._pdf_zoom(1.0 + ev.value())
+                        return True
+                except AttributeError:
+                    pass
+        return super().eventFilter(obj, ev)
 
     def _shortcut(self, keys: str, slot):
         from PySide6.QtGui import QShortcut

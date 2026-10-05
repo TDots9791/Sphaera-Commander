@@ -116,12 +116,7 @@ _T = {
         ("{action} {count} item(s) from\n{dir}?\n\n{names}",
          "将{action} {dir} 中的 {count} 个项目？\n\n{names}"),
     "{mode}: {path}": ("{mode}: {path}", "{mode}：{path}"),
-    "{name} • PDF: страница 1 из {count} • F3 — все страницы":
-        ("{name} • PDF: page 1 of {count} • F3 — all pages",
-         "{name} • PDF：第 1 页，共 {count} 页 • F3 — 所有页面"),
     "{name} • кодировка: {enc}": ("{name} • encoding: {enc}", "{name} • 编码：{enc}"),
-    "{name} • слайд 1 из {count} • F3":
-        ("{name} • slide 1 of {count} • F3", "{name} • 第 1 张幻灯片，共 {count} 张 • F3"),
     "{old} — {err}": ("{old} — {err}", "{old} — {err}"),
     "{old} — назначение уже существует: {new}":
         ("{old} — destination already exists: {new}", "{old} — 目标已存在：{new}"),
@@ -709,6 +704,18 @@ _T = {
     "сохранено (xlsx{note})": ("saved (xlsx{note})", "已保存（xlsx{note}）"),
     "строк: {n} • формул: {f}":
         ("rows: {n} • formulas: {f}", "行：{n} • 公式：{f}"),
+    "Предыдущая страница": ("Previous page", "上一页"),
+    "Следующая страница": ("Next page", "下一页"),
+    "стр. {n} из {total} • {scale:.0f}%":
+        ("p. {n} of {total} • {scale:.0f}%", "第 {n} 页，共 {total} 页 • {scale:.0f}%"),
+    "{name} • стр. {n} из {count} • F3 — все страницы":
+        ("{name} • p. {n} of {count} • F3 for all pages",
+         "{name} • 第 {n} 页，共 {count} 页 • F3 查看全部"),
+    "{name} • слайд {n} из {count} • F3":
+        ("{name} • slide {n} of {count} • F3", "{name} • 第 {n} 张，共 {count} 张 • F3"),
+    "Листание: кнопки или клик по краю страницы. Масштаб: колесо с Ctrl или щипок на тачпаде.":
+        ("Paging: buttons or click a page edge. Zoom: Ctrl+wheel or touchpad pinch.",
+         "翻页：按钮或点击页面边缘。缩放：Ctrl+滚轮或触控板双指捏合。"),
 }
 
 
