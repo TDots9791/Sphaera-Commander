@@ -281,6 +281,7 @@ class MainWindow(QMainWindow):
 
         act(tr("Просмотр"), "F3", self.open_viewer_cmd)
         act(tr("Правка"), "F4", self.open_editor_cmd)
+        act(tr("Создать файл"), "Shift+F4", self.do_create_file)
         self.act_copy = act(tr("Копирование"), "F5", self.do_copy)
         self.act_move = act(tr("Перенос"), "F6", self.do_move)
         act(tr("Новая папка"), "F7", self.do_mkdir)
@@ -288,12 +289,20 @@ class MainWindow(QMainWindow):
         act(tr("Удалить безвозвратно"), "Shift+F8", self.do_delete_permanent)
         act(tr("Переименовать"), "Shift+F6", self.do_rename)
         act(tr("Групповое переименование…"), "Ctrl+M", self.do_batch_rename)
+        act(tr("Создать символьную ссылку…"), None, self.do_symlink)
+        act(tr("Создать жёсткую ссылку…"), None, self.do_hardlink)
         act(tr("Поиск файлов…"), "Alt+F7", self.do_search)
         act(tr("Запаковать…"), "Alt+F5", self.do_pack)
         act(tr("Распаковать…"), "Alt+F6", self.do_unpack)
         act(tr("Сравнить каталоги"), "Shift+F2", self.compare_dirs)
         act(tr("Синхронизация с облаком…"), None, self.open_cloud_sync)
         act(tr("Открыть системным приложением"), "Ctrl+E", self.open_system)
+        act(tr("Свойства"), "Alt+Enter", self.do_properties)
+        act(tr("Назад (история панели)"), "Alt+Left",
+            lambda: self.active.navigate_history(-1))
+        act(tr("Вперёд (история панели)"), "Alt+Right",
+            lambda: self.active.navigate_history(1))
+        act(tr("История панели"), "Alt+Down", self._panel_history_menu)
         act(tr("Обновить"), "Ctrl+R", self.refresh_all)
         self.act_thumbs = act(tr("Миниатюры (картинки и PDF)"), None,
                               lambda: self.toggle_thumbnails(), checkable=True)
@@ -352,8 +361,12 @@ class MainWindow(QMainWindow):
                       tr("Групповое переименование…"), tr("Поиск файлов…")):
             m_file.addAction(self._find_action(title))
         m_file.addSeparator()
-        for title in (tr("Запаковать…"), tr("Распаковать…")):
+        for title in (tr("Запаковать…"), tr("Распаковать…"),
+                      tr("Создать символьную ссылку…"),
+                      tr("Создать жёсткую ссылку…")):
             m_file.addAction(self._find_action(title))
+        m_file.addSeparator()
+        m_file.addAction(self._find_action(tr("Свойства")))
         m_file.addSeparator()
         m_file.addAction(self._find_action(tr("Выход")))
 
@@ -844,6 +857,8 @@ class MainWindow(QMainWindow):
         menu.addAction(self._find_action(tr("Открыть системным приложением")))
         menu.addAction(tr("Копировать полный путь"),
                        lambda: self._copy_paths(panel))
+        if not panel.is_vfs and entry is not None:
+            menu.addAction(self._find_action(tr("Свойства")))
         plugin_actions = self._plugin_context_actions(panel, entry)
         if plugin_actions:
             menu.addSeparator()
@@ -905,11 +920,18 @@ class MainWindow(QMainWindow):
         return entry.path, files, None, ""
 
     def open_viewer_cmd(self):
+        """F3: просмотр в немодальном окне (как в TC) — панели живут своей
+        жизнью; ссылки на окна держим, пока не закроют."""
         path, files, _browser, _member = self._viewer_targets()
         if path is None:
             self._status(tr("Нет файла под курсором"))
             return
-        open_viewer(self, path, files, editable=False).exec()
+        dlg = open_viewer(self, path, files, editable=False, modal=False)
+        self._viewers = [v for v in getattr(self, "_viewers", [])
+                         if v.isVisible()]
+        self._viewers.append(dlg)
+        dlg.show()
+        dlg.raise_()
 
     def open_editor_cmd(self):
         path, files, browser, member = self._viewer_targets()
@@ -954,6 +976,109 @@ class MainWindow(QMainWindow):
         else:
             entry_path = entry.path
         QDesktopServices.openUrl(QUrl.fromLocalFile(entry_path))
+
+    def do_properties(self):
+        """Alt+Enter: свойства объекта под курсором (права/владелец/размеры)."""
+        if self.active.is_vfs:
+            self._status(tr("Свойства в архиве не показываются"))
+            return
+        entry = self.active.current_entry()
+        if entry is None:
+            self._status(tr("Нет объекта под курсором"))
+            return
+        from .dialogs import PropertiesDialog
+
+        dlg = PropertiesDialog(self, entry.path)
+        if dlg.exec():
+            self.refresh_all()
+
+    def do_create_file(self):
+        """Shift+F4 (TC): создать файл и открыть во встроенном редакторе."""
+        panel = self.active
+        if panel.is_vfs:
+            self._status(tr("Создание файлов в архиве не поддерживается"))
+            return
+        name, ok = QInputDialog.getText(self, tr("Новый файл"),
+                                        tr("Имя файла:"), text="новый.txt")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        path = os.path.join(panel.current_path(), name)
+        if not os.path.exists(path):
+            try:
+                with open(path, "w"):
+                    pass
+            except OSError as exc:
+                QMessageBox.critical(self, tr("Ошибка"),
+                                     tr("Не удалось создать файл:\n{err}").format(
+                                         err=exc.strerror or exc))
+                return
+        panel.reveal(name)
+        open_viewer(self, path, [path], editable=True).exec()
+
+    def do_symlink(self):
+        """Символьная ссылка на объект под курсором (цель — абсолютный путь)."""
+        panel = self.active
+        if panel.is_vfs:
+            self._status(tr("Ссылки в архиве не создаются"))
+            return
+        entry = panel.current_entry()
+        if entry is None:
+            self._status(tr("Нет объекта под курсором"))
+            return
+        default = tr("Ссылка на {name}").format(name=entry.name)
+        name, ok = QInputDialog.getText(
+            self, tr("Символьная ссылка"),
+            tr("Имя ссылки (цель: {target}):").format(target=entry.path),
+            text=default)
+        if not ok or not name.strip():
+            return
+        dest = os.path.join(panel.current_path(), name.strip())
+        if os.path.lexists(dest):
+            QMessageBox.warning(self, tr("Символьная ссылка"),
+                                tr("{out}\nуже существует").format(out=dest))
+            return
+        try:
+            os.symlink(entry.path, dest)
+        except OSError as exc:
+            QMessageBox.critical(self, tr("Ошибка"),
+                                 tr("Не удалось создать ссылку:\n{err}").format(
+                                     err=exc.strerror or exc))
+            return
+        panel.reveal(name.strip())
+
+    def do_hardlink(self):
+        """Жёсткая ссылка на файл: создаётся в каталоге противоположной панели."""
+        panel = self.active
+        if panel.is_vfs or self._other().is_vfs:
+            self._status(tr("Ссылки в архиве не создаются"))
+            return
+        entry = panel.current_entry()
+        if entry is None or entry.is_dir:
+            self._status(tr("Жёсткая ссылка — только для файла под курсором"))
+            return
+        dest = os.path.join(self._other().current_path(), entry.name)
+        if os.path.lexists(dest):
+            QMessageBox.warning(self, tr("Жёсткая ссылка"),
+                                tr("{out}\nуже существует").format(out=dest))
+            return
+        try:
+            os.link(entry.path, dest)
+        except OSError as exc:
+            QMessageBox.critical(self, tr("Ошибка"),
+                                 tr("Не удалось создать ссылку:\n{err}").format(
+                                     err=exc.strerror or exc))
+            return
+        self._status(tr("Жёсткая ссылка создана: {path}").format(path=dest))
+        self.refresh_all()
+
+    def _panel_history_menu(self):
+        """Alt+↓: последние каталоги активной панели (список сверху — свежие)."""
+        panel = self.active
+        menu = QMenu(tr("История панели"), self)
+        for path in reversed(panel.history()):
+            menu.addAction(path, lambda p=path: panel.cd(p))
+        menu.exec(self.cursor().pos())
 
     # ------------------------------------------------------------- операции
 

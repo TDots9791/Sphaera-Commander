@@ -133,6 +133,33 @@ class EvalTests(unittest.TestCase):
         self.assertEqual(ev("=COLUMNS(A1:B3)", rows), 2.0)
 
 
+    def test_date_text_coercion(self):
+        # текст-дата в арифметике — serial; YEAR/MONTH/DAY работают
+        rows = [["05.03.2024", "2024-03-06"]]
+        self.assertEqual(ev("=A1+1", rows), F.parse_date_text("06.03.2024"))
+        self.assertEqual(ev("=YEAR(A1)", rows), 2024.0)
+        self.assertEqual(ev("=MONTH(A1)", rows), 3.0)
+        self.assertEqual(ev("=DAY(B1)", rows), 6.0)
+        self.assertEqual(ev("=B1-A1", rows), 1.0)
+        # SUM текст-даты не считает (как Excel — это текст)
+        self.assertEqual(ev("=SUM(A1:A2)", rows), 0.0)
+
+    def test_text_function(self):
+        rows = [["1234.5", "0.25", "05.03.2024"]]
+        self.assertEqual(ev('=TEXT(A1,"#,##0.00")', rows), "1 234.50")
+        self.assertEqual(ev('=TEXT(A1,"0.00")', rows), "1234.50")
+        self.assertEqual(ev('=TEXT(B1,"0%")', rows), "25%")
+        self.assertEqual(ev('=TEXT(C1,"ДД.ММ.ГГГГ")', rows), "05.03.2024")
+        self.assertEqual(ev('=TEXT(DATE(2024,3,5),"ГГГГ-ММ-ДД")', rows),
+                         "2024-03-05")
+
+    def test_parse_date_text(self):
+        self.assertEqual(F.parse_date_text("05.03.2024"),
+                         F.parse_date_text("2024-03-05"))
+        self.assertIsInstance(F.parse_date_text("32.13.2024"), F.ExcelError)
+        self.assertEqual(F.parse_date_text("нет"), F.ERR_VALUE)
+
+
 class SheetTests(unittest.TestCase):
     def test_evaluate_sheet_values(self):
         rows = [["10", "20", "=SUM(A1:B1)", '=A1*B1&" руб"'],

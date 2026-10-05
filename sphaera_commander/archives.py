@@ -302,6 +302,61 @@ def _7z_members(archive_path: str) -> list[tuple[str, int, str]]:
     return out
 
 
+def _7z_rewrite(archive_path: str, skip: set[str], replace: dict[str, str],
+                result) -> OpResult:
+    """Правка состава 7z утилитой `7z d`/`7z u`. Работа на копии архива,
+    проверка целостности `7z t`, затем os.replace — атомарность как у
+    zip/tar-пути."""
+    tool = external_tool("7z")
+    if tool is None:
+        return OpResult(errors=[FileError(
+            archive_path, "7z (p7zip) не установлен — правка 7z недоступна")])
+    base_dir = os.path.dirname(archive_path) or "."
+    work_fd, work_path = tempfile.mkstemp(prefix=".sc_7z_", suffix=".7z",
+                                          dir=base_dir)
+    os.close(work_fd)
+    stage = tempfile.mkdtemp(prefix=".sc_7z_stage_", dir=base_dir)
+    try:
+        shutil.copy2(archive_path, work_path)
+        if skip:
+            proc = subprocess.run(
+                [tool, "d", "-ba", "--", work_path, *sorted(skip)],
+                capture_output=True, text=True, timeout=600)
+            if proc.returncode != 0:
+                raise OSError(proc.stderr.strip() or "7z не смог удалить члены")
+            result.skipped += len(skip)
+        for member, src_path in sorted(replace.items()):
+            dest = os.path.join(stage, member)
+            os.makedirs(os.path.dirname(dest) or stage, exist_ok=True)
+            shutil.copy2(src_path, dest)
+            # cwd=stage: в архив попадает относительный путь = имя члена
+            proc = subprocess.run(
+                [tool, "u", "--", work_path, member],
+                capture_output=True, text=True, timeout=600, cwd=stage)
+            if proc.returncode != 0:
+                raise OSError(proc.stderr.strip()
+                              or "7z не смог обновить член архива")
+            result.done_files += 1
+            result.done_bytes += os.path.getsize(src_path)
+        proc = subprocess.run([tool, "t", work_path],
+                              capture_output=True, text=True, timeout=600)
+        if proc.returncode != 0:
+            raise OSError(proc.stderr.strip() or "7z: целостность нарушена")
+        os.replace(work_path, archive_path)
+    except Exception as exc:
+        try:
+            os.unlink(work_path)
+        except OSError:
+            pass
+        if isinstance(exc, (OSError, ValueError, subprocess.SubprocessError)):
+            result.errors.append(FileError(archive_path, str(exc)))
+        else:
+            raise
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    return result
+
+
 def _rar_members(archive_path: str) -> list[tuple[str, int, str]]:
     """Список членов RAR: `unrar lb -v` — только имена (без размеров:
     каталоги-члены с завершающим «/»; размеры 0 — известное ограничение v1)."""
@@ -680,11 +735,12 @@ class ArchiveBrowser:
 
     def _rewrite(self, skip: set[str], replace: dict[str, str]) -> OpResult:
         result = OpResult()
-        if self.format in ("7z", "rar"):
-            what = "unrar/7z" if self.format == "rar" else "7z"
+        if self.format == "rar":
             return OpResult(errors=[FileError(
                 self.archive_path,
-                "изменение состава {} не поддерживается — распакуйте и упакуйте заново".format(what))])
+                "изменение состава rar не поддерживается — распакуйте и упакуйте заново")])
+        if self.format == "7z":
+            return _7z_rewrite(self.archive_path, skip, replace, result)
         tmp_fd, tmp_path = tempfile.mkstemp(
             prefix=".sc_rebuild_", dir=os.path.dirname(self.archive_path))
         os.close(tmp_fd)

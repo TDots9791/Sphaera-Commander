@@ -51,7 +51,57 @@ class FolderTabsTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_tabs_survive_restart(self):
+        """Вкладки сохраняются при закрытии окна и восстанавливаются в новом."""
+        import time as _time
+
+        from sphaera_commander import config as cfg
+
+        cfg.qsettings().setValue("panels/foldertabs", "")
+        tmp = tempfile.mkdtemp(prefix="sc_tabs_persist_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        sub = os.path.join(tmp, "первая")
+        os.makedirs(sub)
+        w = app_mod.MainWindow()
+        w.show()
+        self.app.processEvents()
+        plugin = next(p for p in w._plugins if p.id == "foldertabs")
+        tabs = plugin._tabs[w.left]
+        w.left.cd(sub)
+        w.left.wait_loaded()
+        self.app.processEvents()
+        tabs.new_tab()  # вторая вкладка = текущий путь
+        sub2 = os.path.join(tmp, "вторая")
+        os.makedirs(sub2)
+        w.left.cd(sub2)  # во второй вкладке уходим в другой каталог
+        w.left.wait_loaded()
+        self.app.processEvents()
+        plugin.on_shutdown()  # как при закрытии приложения
+        w.close()
+
+        w2 = app_mod.MainWindow()
+        try:
+            w2.show()
+            self.app.processEvents()
+            plugin2 = next(p for p in w2._plugins if p.id == "foldertabs")
+            tabs2 = plugin2._tabs[w2.left]
+            deadline = _time.time() + 5
+            while _time.time() < deadline and tabs2.bar.count() < 2:
+                self.app.processEvents()
+                _time.sleep(0.02)
+            self.assertEqual(tabs2.bar.count(), 2)
+            self.assertIn(os.path.basename(sub),
+                          [tabs2.bar.tabText(i) for i in range(2)])
+        finally:
+            w2.close()
+            cfg.qsettings().setValue("panels/foldertabs", "")
+
     def test_tabs_sync_with_panel(self):
+        from sphaera_commander import config as cfg
+
+        # тестовый прогон может оставить сохранённые вкладки других окон —
+        # контракт теста: старт без сохранённого набора
+        cfg.qsettings().setValue("panels/foldertabs", "")
         w = app_mod.MainWindow()
         try:
             w.show()

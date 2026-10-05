@@ -716,6 +716,106 @@ _T = {
     "Листание: кнопки или клик по краю страницы. Масштаб: колесо с Ctrl или щипок на тачпаде.":
         ("Paging: buttons or click a page edge. Zoom: Ctrl+wheel or touchpad pinch.",
          "翻页：按钮或点击页面边缘。缩放：Ctrl+滚轮或触控板双指捏合。"),
+    "{date} — ГГГГ-ММ-ДД, {time} — ЧЧММСС, {orig} — исходное имя, {n} — счётчик":
+        ("{date} — YYYY-MM-DD, {time} — HHMMSS, {orig} — original name, {n} — counter",
+         "{date} — YYYY-MM-DD，{time} — HHMMSS，{orig} — 原名，{n} — 序号"),
+    "{files} файл(ов), {dirs} подпапок":
+        ("{files} file(s), {dirs} subfolders", "{files} 个文件，{dirs} 个子文件夹"),
+    "{out}\nуже существует": ("{out}\nalready exists", "{out}\n已存在"),
+    "Анализ места в архиве не считается":
+        ("Disk usage analysis is not available inside archives",
+         "归档内无法进行空间分析"),
+    "Анализ места: {name}": ("Disk usage: {name}", "空间分析：{name}"),
+    "Анализ места…": ("Disk usage…", "空间分析…"),
+    "Владелец": ("Owner", "所有者"),
+    "Вперёд (история панели)": ("Forward (panel history)", "前进（面板历史）"),
+    "Выберите картинки (png/jpg/webp/bmp/tiff)":
+        ("Select images (png/jpg/webp/bmp/tiff)", "选择图片（png/jpg/webp/bmp/tiff）"),
+    "Доля": ("Share", "占比"),
+    "Доступ": ("Accessed", "访问时间"),
+    "Жёсткая ссылка": ("Hard link", "硬链接"),
+    "Жёсткая ссылка создана: {path}": ("Hard link created: {path}", "硬链接已创建：{path}"),
+    "Жёсткая ссылка — только для файла под курсором":
+        ("A hard link applies to the file under the cursor only",
+         "硬链接仅适用于光标所在文件"),
+    "Жёстких ссылок": ("Hard links", "硬链接数"),
+    "Запись": ("Write", "写入"),
+    "Имя ссылки (цель: {target}):":
+        ("Link name (target: {target}):", "链接名称（目标：{target}）："),
+    "Имя файла:": ("File name:", "文件名："),
+    "Исполнение": ("Execute", "执行"),
+    "История панели": ("Panel history", "面板历史"),
+    "Каталог назначения не найден: {path}":
+        ("Destination folder not found: {path}", "未找到目标文件夹：{path}"),
+    "Качество:": ("Quality:", "质量："),
+    "Конвертация в архиве не поддерживается":
+        ("Conversion inside archives is not supported", "归档内不支持转换"),
+    "Конвертация картинок: {n}": ("Image conversion: {n}", "图片转换：{n}"),
+    "Конвертировать": ("Convert", "转换"),
+    "Конвертировать картинки": ("Convert images", "转换图片"),
+    "Конвертировать картинки…": ("Convert images…", "转换图片…"),
+    "Конвертировать нечего (цели совпадают с источниками)":
+        ("Nothing to convert (targets match sources)",
+         "无可转换（目标与源相同）"),
+    "Куда:": ("Destination:", "目标位置："),
+    "Место на диске": ("Size on disk", "占用空间"),
+    "На уровень выше": ("One level up", "上一级"),
+    "Назад (история панели)": ("Back (panel history)", "后退（面板历史）"),
+    "Не удалось сменить права: {exc}":
+        ("Could not change permissions: {exc}", "无法更改权限：{exc}"),
+    "Не удалось сменить права: {name}: {exc}":
+        ("Could not change permissions: {name}: {exc}",
+         "无法更改权限：{name}：{exc}"),
+    "Не удалось создать ссылку:\n{err}":
+        ("Could not create the link:\n{err}", "无法创建链接：\n{err}"),
+    "Не удалось создать файл:\n{err}":
+        ("Could not create the file:\n{err}", "无法创建文件：\n{err}"),
+    "Новый файл": ("New file", "新建文件"),
+    "Обзор…": ("Browse…", "浏览…"),
+    "Одноимённые файлы сверяются хэшами SHA-256, а не размером и датой":
+        ("Same-name files are compared by SHA-256 hashes, not size and date",
+         "同名文件按 SHA-256 哈希比较，而非大小和日期"),
+    "Остальные": ("Others", "其他"),
+    "Переименовать по EXIF-дате": ("Rename by EXIF date", "按 EXIF 日期重命名"),
+    "Переименовать по EXIF-дате…": ("Rename by EXIF date…", "按 EXIF 日期重命名…"),
+    "Права (буквы)": ("Permissions (letters)", "权限（字母）"),
+    "Применить права": ("Apply permissions", "应用权限"),
+    "Применить рекурсивно (вложенные)":
+        ("Apply recursively (nested items)", "递归应用（含嵌套项）"),
+    "Свойства": ("Properties", "属性"),
+    "Свойства в архиве не показываются":
+        ("Properties are not available inside archives", "归档内不显示属性"),
+    "Свойства: {name}": ("Properties: {name}", "属性：{name}"),
+    "Символьная ссылка": ("Symbolic link", "符号链接"),
+    "Содержимое": ("Contents", "内容"),
+    "Создан/метаданные": ("Created/metadata", "创建/元数据"),
+    "Создание файлов в архиве не поддерживается":
+        ("Creating files inside archives is not supported", "归档内不支持创建文件"),
+    "Создать жёсткую ссылку…": ("Create hard link…", "创建硬链接…"),
+    "Создать символьную ссылку…": ("Create symbolic link…", "创建符号链接…"),
+    "Создать файл": ("Create file", "创建文件"),
+    "Сравнивать по содержимому (медленнее)":
+        ("Compare by content (slower)", "按内容比较（较慢）"),
+    "Ссылка на {name}": ("Link to {name}", "链接到 {name}"),
+    "Ссылки в архиве не создаются":
+        ("Links cannot be created inside archives", "归档内无法创建链接"),
+    "Суффикс имени:": ("Name suffix:", "名称后缀："),
+    "Указывает на": ("Points to", "指向"),
+    "Чтение": ("Read", "读取"),
+    "не удалось записать {fmt}": ("could not write {fmt}", "无法写入 {fmt}"),
+    "не удалось прочитать изображение":
+        ("could not read the image", "无法读取图片"),
+    "объектов: {n} • файл(ов): {f} • {size}":
+        ("items: {n} • file(s): {f} • {size}", "条目：{n} • 文件：{f} • {size}"),
+    "папка": ("folder", "文件夹"),
+    "переименуется: {n} из {total}":
+        ("to be renamed: {n} of {total}", "将重命名：{n}/{total}"),
+    "символьная ссылка": ("symbolic link", "符号链接"),
+    "файл": ("file", "文件"),
+    "файлов к конвертации: {n}":
+        ("files to convert: {n}", "待转换文件：{n}"),
+    "файлов: {n}": ("files: {n}", "文件：{n}"),
+    "цель уже существует": ("target already exists", "目标已存在"),
 }
 
 

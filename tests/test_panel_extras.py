@@ -390,6 +390,242 @@ class PdfThumbnailTests(unittest.TestCase):
         self.assertFalse(icon.isNull())
 
 
+class PanelHistoryTests(unittest.TestCase):
+    """История навигации панели: назад/вперёд, ветвление, список."""
+
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="sc_hist_")
+        self.a = os.path.join(self.tmp, "а")
+        self.b = os.path.join(self.tmp, "б")
+        self.c = os.path.join(self.tmp, "в")
+        for p in (self.a, self.b, self.c):
+            os.makedirs(p)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_back_forward_and_branching(self):
+        from sphaera_commander.panel import FilePanel
+
+        panel = FilePanel()
+        try:
+            panel.cd(self.a)
+            panel.wait_loaded()
+            panel.cd(self.b)
+            panel.wait_loaded()
+            panel.cd(self.c)
+            panel.wait_loaded()
+            self.assertEqual(panel.current_path(), self.c)
+            self.assertTrue(panel.navigate_history(-1))
+            panel.wait_loaded()
+            self.assertEqual(panel.current_path(), self.b)
+            self.assertTrue(panel.navigate_history(-1))
+            panel.wait_loaded()
+            self.assertEqual(panel.current_path(), self.a)
+            # перед «а» в истории — домашний каталог из инициализации панели
+            self.assertTrue(panel.navigate_history(-1))
+            panel.wait_loaded()
+            self.assertEqual(panel.current_path(), os.path.expanduser("~"))
+            self.assertFalse(panel.navigate_history(-1))  # начало
+            self.assertTrue(panel.navigate_history(1))
+            panel.wait_loaded()
+            self.assertTrue(panel.navigate_history(1))
+            panel.wait_loaded()
+            self.assertTrue(panel.navigate_history(1))
+            panel.wait_loaded()
+            self.assertFalse(panel.navigate_history(1))  # конец
+            # ветвление: из прошлого уходим в новый каталог — хвост отрезается
+            panel.navigate_history(-1)
+            panel.wait_loaded()
+            panel.cd(self.c)
+            self.assertEqual(panel.history().count(self.b), 1)
+            self.assertFalse(panel.navigate_history(1))
+        finally:
+            panel.set_dirsizes(False)
+            panel.deleteLater()
+            QApplication.processEvents()
+
+    def test_history_records_vfs(self):
+        import subprocess as _sp
+
+        from sphaera_commander.panel import FilePanel
+
+        if not shutil.which("zip"):
+            self.skipTest("zip не установлен")
+        arc = os.path.join(self.tmp, "book.zip")
+        with open(os.path.join(self.tmp, "x.txt"), "w") as f:
+            f.write("x")
+        _sp.run(["zip", "-j", "-q", arc,
+                 os.path.join(self.tmp, "x.txt")], check=True)
+        panel = FilePanel()
+        try:
+            self.assertTrue(panel.cd(self.tmp))
+            panel.wait_loaded()
+            self.assertTrue(panel.cd(arc))  # вход в архив
+            panel.wait_loaded()
+            self.assertIn("::", panel.current_path())
+            self.assertTrue(panel.navigate_history(-1))
+            panel.wait_loaded()
+            self.assertEqual(panel.current_path(), self.tmp)
+        finally:
+            panel.set_dirsizes(False)
+            panel.deleteLater()
+            QApplication.processEvents()
+
+
+class PropertiesTests(unittest.TestCase):
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="sc_props_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_details_and_permission_roundtrip(self):
+        from sphaera_commander import fsmodel
+
+        path = os.path.join(self.tmp, "script.sh")
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\necho ok\n")
+        os.chmod(path, 0o640)
+        details = fsmodel.entry_details(path)
+        self.assertFalse(details["is_dir"])
+        self.assertEqual(details["size"], len(b"#!/bin/sh\necho ok\n"))
+        self.assertTrue(details["owner"])
+        self.assertFalse(details["is_link"])
+
+        bits = fsmodel.permission_bits(0o640)
+        self.assertEqual(bits, (True, True, False,
+                                True, False, False,
+                                False, False, False))
+        mode = fsmodel.bits_to_mode((True, True, True,
+                                     True, False, True,
+                                     True, False, True), 0o100640)
+        self.assertEqual(mode & 0o777, 0o755)
+        fsmodel.set_permissions(path, mode)
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o755)
+
+    def test_properties_dialog_applies_chmod(self):
+        import unittest.mock
+
+        from sphaera_commander.dialogs import PropertiesDialog
+
+        path = os.path.join(self.tmp, "run.sh")
+        with open(path, "w") as f:
+            f.write("x")
+        os.chmod(path, 0o600)
+        dlg = PropertiesDialog(None, path)
+        # включить «исполнение» владельца и применить
+        for idx, box in dlg._boxes:
+            if idx == 2:  # owner execute
+                box.setChecked(True)
+        dlg._apply()
+        self.assertTrue(os.stat(path).st_mode & 0o100)
+
+    def test_details_dir_counts(self):
+        from sphaera_commander import fsmodel
+
+        sub = os.path.join(self.tmp, "под")
+        os.makedirs(sub)
+        with open(os.path.join(sub, "f.bin"), "wb") as f:
+            f.write(b"x" * 100)
+        details = fsmodel.entry_details(self.tmp)
+        self.assertTrue(details["is_dir"])
+        self.assertEqual(details["files"], 1)
+        self.assertEqual(details["dirs"], 1)
+
+
+class LinkTests(unittest.TestCase):
+    """Символьные и жёсткие ссылки (меню Файл)."""
+
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="sc_link_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_symlink_creation(self):
+        import unittest.mock
+
+        from sphaera_commander.app import MainWindow
+
+        target = os.path.join(self.tmp, "цель.txt")
+        with open(target, "w") as f:
+            f.write("data")
+        win = MainWindow()
+        try:
+            win.show()
+            win.left.cd(self.tmp)
+            win.left.wait_loaded()
+            win.left.reveal("цель.txt")
+            win.left.wait_loaded()
+            with unittest.mock.patch(
+                    "sphaera_commander.app.QInputDialog.getText",
+                    return_value=("моя ссылка", True)):
+                win.do_symlink()
+            link = os.path.join(self.tmp, "моя ссылка")
+            self.assertTrue(os.path.islink(link))
+            self.assertEqual(os.readlink(link), target)
+        finally:
+            win.close()
+
+    def test_hardlink_to_other_panel(self):
+        from sphaera_commander.app import MainWindow
+
+        src_dir = os.path.join(self.tmp, "источник")
+        dst_dir = os.path.join(self.tmp, "приёмник")
+        os.makedirs(src_dir)
+        os.makedirs(dst_dir)
+        target = os.path.join(src_dir, "файл.bin")
+        with open(target, "w") as f:
+            f.write("same")
+        win = MainWindow()
+        try:
+            win.show()
+            win.left.cd(src_dir)
+            win.right.cd(dst_dir)
+            win.left.wait_loaded()
+            win.right.wait_loaded()
+            win.left.reveal("файл.bin")
+            win.left.wait_loaded()
+            win.do_hardlink()
+            self.assertTrue(os.path.exists(os.path.join(dst_dir, "файл.bin")))
+            self.assertEqual(
+                os.stat(target).st_ino,
+                os.stat(os.path.join(dst_dir, "файл.bin")).st_ino)
+        finally:
+            win.close()
+
+    def test_create_file_shift_f4(self):
+        import unittest.mock
+
+        from sphaera_commander.app import MainWindow
+
+        win = MainWindow()
+        try:
+            win.show()
+            win.left.cd(self.tmp)
+            win.left.wait_loaded()
+            captured = {}
+            with unittest.mock.patch(
+                    "sphaera_commander.app.QInputDialog.getText",
+                    return_value=("новый-файл.txt", True)), \
+                    unittest.mock.patch(
+                        "sphaera_commander.app.open_viewer",
+                        side_effect=lambda parent, path, files,
+                        editable=False, modal=True, goto_line=0:
+                        captured.update(path=path, editable=editable)
+                        or type("Dlg", (), {"exec": lambda self: None})()):
+                win.do_create_file()
+            self.assertTrue(os.path.isfile(
+                os.path.join(self.tmp, "новый-файл.txt")))
+            self.assertEqual(captured.get("editable"), True)
+        finally:
+            win.close()
+
+
 class MountsTests(unittest.TestCase):
     FIXTURE = {
         "blockdevices": [

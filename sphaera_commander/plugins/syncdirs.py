@@ -13,6 +13,7 @@ import time
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from sphaera_commander.fsmodel import (
+    compare_by_hash,
     compare_name_sets,
     entry_for,
     human_size,
@@ -43,17 +45,29 @@ def _fmt_time(mtime: float) -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
 
 
-def collect_rows(left: str, right: str, show_hidden: bool = False) -> list:
+def collect_rows(left: str, right: str, show_hidden: bool = False,
+                 by_content: bool = False) -> list:
     """Сравнить два каталога (один уровень, как панели).
 
     Возвращает строки (имя, направление, entry_l | None, entry_r | None).
-    Различие — по compare_name_sets: размер или целая секунда mtime.
+    Различие — по compare_name_sets (размер/время) или, с by_content,
+    по содержимому (SHA-256 одноимённых файлов, прогресс — progress_cb).
     """
     lmap = {e.name: e for e in scan_directory(left, show_hidden)
             if e.name != ".."}
     rmap = {e.name: e for e in scan_directory(right, show_hidden)
             if e.name != ".."}
-    ldiff, _rdiff = compare_name_sets(lmap, rmap)
+    if by_content:
+        # содержимое: только одноимённые файлы; каталоги — по имени/времени
+        file_diff_l, file_diff_r = compare_by_hash(
+            {n: os.path.join(left, n) for n, e in lmap.items() if not e.is_dir},
+            {n: os.path.join(right, n) for n, e in rmap.items() if not e.is_dir})
+        ldiff = set(file_diff_l) | {
+            n for n, e in lmap.items()
+            if e.is_dir and (n not in rmap or not rmap[n].is_dir
+                             or int(e.mtime) != int(rmap[n].mtime))}
+    else:
+        ldiff, _rdiff = compare_name_sets(lmap, rmap)
     rows = []
     for name in sorted(set(lmap) | set(rmap)):
         le = lmap.get(name)
@@ -107,7 +121,12 @@ class SyncDirsDialog(QDialog):
         self.table.verticalHeader().hide()
 
         self.status = QLabel(tr("Сканирование…"))
+        self.by_content = QCheckBox(tr("Сравнивать по содержимому (медленнее)"))
+        self.by_content.setToolTip(
+            tr("Одноимённые файлы сверяются хэшами SHA-256, а не размером и датой"))
         row = QHBoxLayout()
+        row.addWidget(self.by_content)
+        row.addStretch(1)
         btn_sync = QPushButton(tr("Синхронизировать отмеченные"))
         btn_sync.clicked.connect(self._sync_selected)
         close = QPushButton(tr("Закрыть"))
@@ -120,10 +139,28 @@ class SyncDirsDialog(QDialog):
         layout.addWidget(self.table, 1)
         layout.addWidget(self.status)
         layout.addLayout(row)
+        layout.addSpacing(2)
 
         self.rowsReady.connect(self._apply_rows)
         self._closed = threading.Event()
-        self._thread = threading.Thread(target=self._scan_async, daemon=True,
+        self.by_content.toggled.connect(self._rescan)
+        self._thread = None
+        self._rescan()
+
+    def _rescan(self) -> None:
+        """Пересканировать (при открытии и переключении галки содержимого)."""
+        self.table.setRowCount(0)
+        self.status.setText(tr("Сканирование…"))
+        by_content = self.by_content.isChecked()
+        closed = self._closed
+
+        def worker():
+            rows = collect_rows(self.left, self.right, self.show_hidden,
+                                by_content=by_content)
+            if not closed.is_set():
+                self.rowsReady.emit(rows)
+
+        self._thread = threading.Thread(target=worker, daemon=True,
                                         name="syncdirs")
         self._thread.start()
 

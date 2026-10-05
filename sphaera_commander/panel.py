@@ -228,6 +228,9 @@ class FilePanel(QWidget):
         self._reveal_name: str | None = None
         self._vfs: ArchiveBrowser | None = None
         self._vfs_dir = ""
+        # история навигации (Alt+←/→, Alt+↓ — список)
+        self._history: list[str] = []
+        self._hist_pos = -1
 
         self.drive_button = QPushButton()
         self.drive_button.setToolTip(tr("Диски и облака (меню подключения)"))
@@ -318,13 +321,15 @@ class FilePanel(QWidget):
     def vfs(self) -> ArchiveBrowser | None:
         return self._vfs
 
-    def cd(self, path: str, quiet: bool = False) -> bool:
+    def cd(self, path: str, quiet: bool = False,
+           _from_history: bool = False) -> bool:
         if "::" in path:
             archive, _, inner = path.partition("::")
-            return self._cd_vfs(archive, inner, quiet)
+            return self._cd_vfs(archive, inner, quiet,
+                                _from_history=_from_history)
         target = os.path.abspath(os.path.expanduser(path))
         if os.path.isfile(target) and archive_format(target):
-            return self._cd_vfs(target, "", quiet)
+            return self._cd_vfs(target, "", quiet, _from_history=_from_history)
         self._vfs = None
         self._vfs_dir = ""
         if not os.path.isdir(target):
@@ -336,10 +341,13 @@ class FilePanel(QWidget):
         self._pending = target
         self._gen += 1
         self.path_changed.emit(target)
+        if not _from_history:
+            self._push_history(target)
         self._start_scan(target, self._gen)
         return True
 
-    def _cd_vfs(self, archive: str, inner: str, quiet: bool) -> bool:
+    def _cd_vfs(self, archive: str, inner: str, quiet: bool,
+                _from_history: bool = False) -> bool:
         archive = os.path.abspath(os.path.expanduser(archive))
         try:
             if self._vfs is None or self._vfs.archive_path != archive:
@@ -358,8 +366,38 @@ class FilePanel(QWidget):
         self._pending = f"{archive}::{self._vfs_dir}"
         self._gen += 1
         self.path_changed.emit(self._pending)
+        if not _from_history:
+            self._push_history(self._pending)
         self._start_scan(self._pending, self._gen)
         return True
+
+    # -- история навигации ----------------------------------------------------
+
+    MAX_HISTORY = 100
+
+    def _push_history(self, path: str) -> None:
+        if self._history and self._history[-1] == path:
+            self._hist_pos = len(self._history) - 1
+            return
+        if self._hist_pos < len(self._history) - 1:
+            del self._history[self._hist_pos + 1:]  # ветвление истории
+        self._history.append(path)
+        if len(self._history) > self.MAX_HISTORY:
+            del self._history[:len(self._history) - self.MAX_HISTORY]
+        self._hist_pos = len(self._history) - 1
+
+    def navigate_history(self, delta: int) -> bool:
+        """Alt+←/→: назад/вперёд по истории этой панели."""
+        pos = self._hist_pos + delta
+        if not 0 <= pos < len(self._history):
+            return False
+        target = self._history[pos]
+        self._hist_pos = pos
+        self.cd(target, quiet=True, _from_history=True)
+        return True
+
+    def history(self) -> list[str]:
+        return list(self._history)
 
     def _rewatch(self, path: str) -> None:
         if self._watcher.directories():

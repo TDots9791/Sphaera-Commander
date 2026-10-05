@@ -502,9 +502,40 @@ class SevenZipRarTests(unittest.TestCase):
         archives._extract_file("7z", out, "под/два.txt", target)
         with open(target, encoding="utf-8") as f:
             self.assertEqual(f.read(), "второй файл")
-        # правка состава — честный отказ
+        # правка состава 7z через утилиту: удалить и заменить
         res = browser.delete_members(["один.txt"])
-        self.assertTrue(res.errors)
+        self.assertFalse(res.errors)
+        self.assertEqual(res.skipped, 1)
+        members2 = {archives.norm_member(n) for n, _s, _k
+                    in archives.read_members(out)}
+        self.assertNotIn("один.txt", members2)
+        self.assertIn("под/два.txt", members2)
+        new_browser = archives.ArchiveBrowser(out)
+        local = new_browser.extract_member_to_temp(
+            "под/два.txt", self.tmp)
+        with open(local, "w", encoding="utf-8") as f:
+            f.write("второй файл — обновлён")
+        res = new_browser.replace_member("под/два.txt", local)
+        self.assertFalse(res.errors)
+        final = os.path.join(self.tmp, "финал")
+        os.makedirs(final)
+        new_browser.extract_members(["под/два.txt"], final,
+                                    lambda p: None, lambda: False)
+        with open(os.path.join(final, "под", "два.txt"),
+                  encoding="utf-8") as f:
+            self.assertEqual(f.read(), "второй файл — обновлён")
+
+    @unittest.skipUnless(shutil.which("7z"), "7z не установлен")
+    def test_7z_replace_adds_new_member_for_unknown(self):
+        out = os.path.join(self.tmp, "заменс.7z")
+        entries = [entry_for(os.path.join(self.tmp, "один.txt"))]
+        res = archives.pack_items(entries, out, "7z",
+                                  lambda p: None, lambda: False)
+        self.assertFalse(res.errors)
+        browser = archives.ArchiveBrowser(out)
+        res = browser.replace_member("нет-такого.txt",
+                                     os.path.join(self.tmp, "один.txt"))
+        self.assertFalse(res.errors)  # добавление нового члена — валидный случай
 
     def test_missing_tool_is_graceful(self):
         arc = os.path.join(self.tmp, "ненастоящий.7z")
@@ -521,6 +552,18 @@ class SevenZipRarTests(unittest.TestCase):
             out, "rar", lambda p: None, lambda: False)
         self.assertTrue(res.errors)
         self.assertIn("RAR", res.errors[0].message)
+
+    def test_rar_edit_refused(self):
+        """RAR только чтение: правка состава — честный отказ."""
+        out = os.path.join(self.tmp, "x.rar")
+        with open(out, "wb") as f:
+            f.write(b"Rar!\x1a\x07\x01\x00fake")
+        browser = archives.ArchiveBrowser.__new__(archives.ArchiveBrowser)
+        browser.format = "rar"
+        browser.archive_path = out
+        res = browser._rewrite(skip={"a"}, replace={})
+        self.assertTrue(res.errors)
+        self.assertIn("rar", res.errors[0].message)
 
     @unittest.skipIf(shutil.which("unrar"), "unrar установлен — проверяем graceful")
     def test_rar_without_unrar_graceful(self):

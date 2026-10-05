@@ -335,8 +335,34 @@ def parse_formula(text: str) -> Node:
 
 # ---------------------------------------------------------------- значения
 
+_DATE_RX = re.compile(
+    r"^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4}|\d{2})$|^(\d{4})-(\d{1,2})-(\d{1,2})$")
+
+
+def _date_serial_ymd(y: int, m: int, d: int) -> float:
+    try:
+        return float(_date_serial(y, m, d))
+    except ValueError:
+        return ERR_NUM
+
+
+def parse_date_text(s: str) -> float | ExcelError:
+    """Текст-дата (05.03.2024 / 2024-03-05 / 05.03.24) → serial или ERR_VALUE."""
+    m = _DATE_RX.match(s.strip())
+    if not m:
+        return ERR_VALUE
+    if m.group(1) is not None:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if y < 100:
+            y += 2000 if y < 30 else 1900
+    else:
+        y, mo, d = int(m.group(4)), int(m.group(5)), int(m.group(6))
+    return _date_serial_ymd(y, mo, d)
+
+
 def to_number(v) -> float:
-    """Приведение к числу в духе Excel; ExcelError при неудаче."""
+    """Приведение к числу в духе Excel; ExcelError при неудаче.
+    Текст-дата приводится к последовательной дате (A1+1 для дат работает)."""
     if isinstance(v, ExcelError):
         return v
     if isinstance(v, bool):
@@ -351,7 +377,8 @@ def to_number(v) -> float:
     try:
         return float(s)
     except ValueError:
-        return ERR_VALUE
+        date_v = parse_date_text(str(v))
+        return date_v
 
 
 def to_text(v) -> str:
@@ -964,6 +991,51 @@ def _f_value(ev, args):
     return to_number(ev.scalar(args[0]))
 
 
+_DATE_TOKENS = (("ГГГГ", "%Y"), ("YYYY", "%Y"), ("ГГ", "%y"), ("YY", "%y"),
+                ("ММ", "%m"), ("MM", "%m"), ("ДД", "%d"), ("DD", "%d"),
+                ("ЧЧ", "%H"), ("HH", "%H"), ("М", "%m"), ("M", "%m"),
+                ("Д", "%d"), ("D", "%d"))
+
+
+def _f_text(ev, args):
+    """TEXT: числовые маски (0, 0.00, #,##0, 0%) и дата-маски (ДД.ММ.ГГГГ)."""
+    v = ev.scalar(args[0])
+    if isinstance(v, ExcelError):
+        return v
+    fmt = to_text(ev.scalar(args[1]))
+    if re.search(r"[ДГМЧDYM]", fmt):  # дата-маска
+        n = to_number(v)
+        if isinstance(n, ExcelError):
+            return n
+        pattern = fmt
+        for token, code in _DATE_TOKENS:
+            pattern = pattern.replace(token, code)
+        try:
+            return _from_serial(n).strftime(pattern)
+        except (ValueError, OverflowError):
+            return ERR_VALUE
+    # числовая маска: 0 / 0.00 / #,##0 / 0%
+    n = to_number(v)
+    if isinstance(n, ExcelError):
+        return n
+    percent = "%" in fmt
+    if percent:
+        n *= 100.0
+    integer_part, _, frac_part = fmt.partition(".")
+    decimals = len("".join(ch for ch in frac_part if ch in "0#"))
+    thousands = "#,##" in fmt or ",#" in fmt
+    body = f"{abs(n):.{decimals}f}"
+    if decimals:
+        whole, _, frac = body.partition(".")
+    else:
+        whole, frac = body, ""
+    if thousands:
+        whole = f"{int(whole):,}".replace(",", " ")
+    sign = "-" if n < 0 else ""
+    out = whole + ("." + frac if decimals else "")
+    return sign + out + ("%" if percent else "")
+
+
 # --- даты ---
 
 def _f_today(_ev, args):
@@ -1299,7 +1371,7 @@ _FUNCS: dict[str, object] = {
     "LOWER": _f_lower, "UPPER": _f_upper, "PROPER": _f_proper,
     "TRIM": _f_trim, "SUBSTITUTE": _f_substitute, "REPLACE": _f_replace,
     "FIND": _f_find, "SEARCH": _f_search, "REPT": _f_rept,
-    "VALUE": _f_value,
+    "VALUE": _f_value, "TEXT": _f_text,
     "TODAY": _f_today, "NOW": _f_now,
     "YEAR": _f_year, "MONTH": _f_month, "DAY": _f_day, "DATE": _f_date,
     "COUNTIF": _f_countif, "SUMIF": _f_sumif, "AVERAGEIF": _f_averageif,

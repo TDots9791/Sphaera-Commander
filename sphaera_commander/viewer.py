@@ -537,7 +537,7 @@ class FileViewerDialog(QDialog):
     gridBatch = Signal(object)
 
     def __init__(self, parent, files: list[str], index: int, editable: bool,
-                 goto_line: int = 0):
+                 goto_line: int = 0, modal: bool = True):
         super().__init__(parent)
         self._goto_on_load = goto_line
         self.files = [f for f in files if os.path.isfile(f)]
@@ -575,7 +575,7 @@ class FileViewerDialog(QDialog):
         self._md_timer.setInterval(400)
         self._md_timer.timeout.connect(self._render_live_md)
 
-        self.setModal(True)
+        self.setModal(modal)
         self.resize(980, 680)
 
         self.text_edit = LineNumberTextEdit()
@@ -2108,10 +2108,12 @@ class FileViewerDialog(QDialog):
 
 
 def open_viewer(parent, path: str, all_files: list[str] | None = None,
-                editable: bool = False, goto_line: int = 0) -> FileViewerDialog:
+                editable: bool = False, goto_line: int = 0,
+                modal: bool = True) -> FileViewerDialog:
     files = all_files if all_files else [path]
     if path not in files:
         files = [path] + files
     index = files.index(path)
-    dlg = FileViewerDialog(parent, files, index, editable, goto_line=goto_line)
+    dlg = FileViewerDialog(parent, files, index, editable, goto_line=goto_line,
+                           modal=modal)
     return dlg

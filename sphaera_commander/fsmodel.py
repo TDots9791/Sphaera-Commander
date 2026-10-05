@@ -131,6 +131,75 @@ def mode_string(mode: int) -> str:
     return stat_m.filemode(mode)[1:] if mode else ""
 
 
+def entry_details(path: str) -> dict:
+    """Подробности объекта для диалога «Свойства» (Alt+Enter).
+
+    Ключи: mode, size, blocks (байты на диске, 0 для несобранных разрежённых),
+    atime, mtime, ctime, owner, group, nlink, и для каталогов — dirs, files
+    (рекурсивно dir_stats, ошибки доступа пропускаются).
+    """
+    st = os.lstat(path)
+    import grp
+    import pwd
+
+    def _uid_name(uid):
+        try:
+            return pwd.getpwuid(uid).pw_name
+        except (KeyError, OSError):
+            return str(uid)
+
+    def _gid_name(gid):
+        try:
+            return grp.getgrgid(gid).gr_name
+        except (KeyError, OSError):
+            return str(gid)
+
+    details = {
+        "mode": st.st_mode,
+        "size": 0 if stat_m.S_ISDIR(st.st_mode) else st.st_size,
+        "blocks": st.st_blocks * 512,
+        "atime": st.st_atime,
+        "mtime": st.st_mtime,
+        "ctime": st.st_ctime,
+        "owner": _uid_name(st.st_uid),
+        "group": _gid_name(st.st_gid),
+        "nlink": st.st_nlink,
+        "is_dir": stat_m.S_ISDIR(st.st_mode),
+        "is_link": stat_m.S_ISLNK(st.st_mode),
+    }
+    if details["is_dir"] and not details["is_link"]:
+        stats = dir_stats(path)
+        details["dirs"] = stats.dirs
+        details["files"] = stats.files
+        details["size"] = stats.size
+    return details
+
+
+def set_permissions(path: str, mode: int) -> None:
+    """Сменить права (chmod); OSError пробрасывается вызывающему."""
+    os.chmod(path, mode)
+
+
+def permission_bits(mode: int) -> tuple[bool, ...]:
+    """(owner rwx, group rwx, other rwx) → 9 булевых из стата."""
+    return tuple(bool(mode & bit) for bit in
+                 (stat_m.S_IRUSR, stat_m.S_IWUSR, stat_m.S_IXUSR,
+                  stat_m.S_IRGRP, stat_m.S_IWGRP, stat_m.S_IXGRP,
+                  stat_m.S_IROTH, stat_m.S_IWOTH, stat_m.S_IXOTH))
+
+
+def bits_to_mode(bits: tuple[bool, ...], base_mode: int) -> int:
+    """9 булевых → полный режим с сохранением типа файла и setuid-битов."""
+    FLAG_BITS = (stat_m.S_IRUSR, stat_m.S_IWUSR, stat_m.S_IXUSR,
+                 stat_m.S_IRGRP, stat_m.S_IWGRP, stat_m.S_IXGRP,
+                 stat_m.S_IROTH, stat_m.S_IWOTH, stat_m.S_IXOTH)
+    mode = base_mode & ~(stat_m.S_IRWXU | stat_m.S_IRWXG | stat_m.S_IRWXO)
+    for bit, on in zip(FLAG_BITS, bits):
+        if on:
+            mode |= bit
+    return mode
+
+
 def compare_name_sets(left: dict[str, FileEntry],
                       right: dict[str, FileEntry]) -> tuple[set[str], set[str]]:
     """Имена файлов, отсутствующие или различающиеся (размер/время) в другой панели."""
@@ -143,6 +212,81 @@ def compare_name_sets(left: dict[str, FileEntry],
         return out
 
     return diff(left, right), diff(right, left)
+
+
+HASH_CHUNK = 1024 * 1024
+
+
+def file_sha256(path: str) -> str | None:
+    """SHA-256 файла; None при ошибке чтения."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(HASH_CHUNK)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def compare_by_hash(left_paths: dict[str, str],
+                    right_paths: dict[str, str],
+                    is_cancelled=lambda: False,
+                    progress_cb=None) -> tuple[set[str], set[str]]:
+    """Сравнение по содержимому (SHA-256): только одноимённые файлы с
+    одинаковым размером хэшируются, прочие различия — сразу.
+
+    left/right_paths: {имя: путь}. Прогресс — progress_cb(done, total).
+    """
+    candidates: list[tuple[str, str, str]] = []
+    diff_left: set[str] = set()
+    diff_right: set[str] = set()
+    for name, lpath in left_paths.items():
+        rpath = right_paths.get(name)
+        if rpath is None:
+            diff_left.add(name)
+            continue
+        try:
+            if os.path.getsize(lpath) != os.path.getsize(rpath):
+                diff_left.add(name)
+                diff_right.add(name)
+                continue
+        except OSError:
+            diff_left.add(name)
+            diff_right.add(name)
+            continue
+        candidates.append((name, lpath, rpath))
+    for name in right_paths:
+        if name not in left_paths:
+            diff_right.add(name)
+    total = len(candidates)
+    done = 0
+    lhashes: dict[str, str] = {}
+    rhashes: dict[str, str] = {}
+    for name, lpath, rpath in candidates:
+        if is_cancelled():
+            break
+        lh = file_sha256(lpath)
+        rh = file_sha256(rpath)
+        if lh is None or rh is None:
+            diff_left.add(name)
+            diff_right.add(name)
+        else:
+            lhashes[name] = lh
+            rhashes[name] = rh
+        done += 1
+        if progress_cb is not None:
+            progress_cb(done, total)
+    for name, lh in lhashes.items():
+        if rhashes.get(name) != lh:
+            diff_left.add(name)
+            diff_right.add(name)
+    return diff_left, diff_right
 
 
 def entry_for(path: str) -> FileEntry | None:

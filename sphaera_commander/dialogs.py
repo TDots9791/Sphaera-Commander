@@ -10,6 +10,7 @@ import time
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QGridLayout,
@@ -773,6 +774,114 @@ class PluginsDialog(QDialog):
 
     def app_parent(self):
         return self.parent()
+
+
+class PropertiesDialog(QDialog):
+    """Свойства файла/папки (Alt+Enter): размеры, счётчики, времена,
+    владелец/группа и права-чекбоксы rwx (владелец/группа/остальные);
+    ОК применяет chmod, для папки — опционально рекурсивно (в фоне)."""
+
+    permissionsApplied = Signal(str)
+
+    def __init__(self, parent, path: str):
+        super().__init__(parent)
+        from .fsmodel import (entry_details, human_size, mode_string,
+                              permission_bits)
+
+        self.path = path
+        self.setWindowTitle(tr("Свойства: {name}").format(
+            name=os.path.basename(path) or path))
+        self.resize(560, 520)
+        details = entry_details(path)
+
+        info = QTreeWidget()
+        info.setHeaderHidden(True)
+        info.setColumnCount(2)
+        info.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+
+        def add_row(key, value):
+            QTreeWidgetItem(info, [key, value])
+
+        add_row(tr("Тип"), tr("папка") if details["is_dir"] else
+                (tr("символьная ссылка") if details["is_link"] else tr("файл")))
+        if details["is_link"]:
+            try:
+                add_row(tr("Указывает на"), os.readlink(path))
+            except OSError:
+                pass
+        add_row(tr("Размер"), _fmt_size(details["size"]))
+        if details["is_dir"]:
+            add_row(tr("Содержимое"), tr("{files} файл(ов), {dirs} подпапок").format(
+                files=details.get("files", 0), dirs=details.get("dirs", 0)))
+        add_row(tr("Место на диске"), _fmt_size(details["blocks"]))
+        add_row(tr("Владелец"), f"{details['owner']}:{details['group']}")
+        add_row(tr("Жёстких ссылок"), str(details["nlink"]))
+        add_row(tr("Изменён"), _fmt_time(details["mtime"]))
+        add_row(tr("Доступ"), _fmt_time(details["atime"]))
+        add_row(tr("Создан/метаданные"), _fmt_time(details["ctime"]))
+        add_row(tr("Права (буквы)"), mode_string(details["mode"]))
+
+        names = (tr("Владелец"), tr("Группа"), tr("Остальные"))
+        kinds = (tr("Чтение"), tr("Запись"), tr("Исполнение"))
+        self._boxes: list[tuple[int, tuple]] = []
+        perm_grid = QGridLayout()
+        bits = permission_bits(details["mode"])
+        for who, who_name in enumerate(names):
+            perm_grid.addWidget(QLabel(who_name), 0, who + 1)
+        for kind, kind_name in enumerate(kinds):
+            perm_grid.addWidget(QLabel(kind_name), kind + 1, 0)
+            for who in range(3):
+                box = QCheckBox()
+                idx = who * 3 + kind
+                box.setChecked(bits[idx])
+                self._boxes.append((idx, box))
+                perm_grid.addWidget(box, kind + 1, who + 1)
+
+        self.recursive = QCheckBox(tr("Применить рекурсивно (вложенные)"))
+        self.recursive.setVisible(details["is_dir"] and not details["is_link"])
+
+        btn_ok = QPushButton(tr("Применить права"))
+        btn_ok.clicked.connect(self._apply)
+        btn_close = QPushButton(tr("Закрыть"))
+        btn_close.clicked.connect(self.reject)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.recursive)
+        buttons.addStretch(1)
+        buttons.addWidget(btn_ok)
+        buttons.addWidget(btn_close)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(path))
+        layout.addWidget(info, 1)
+        layout.addLayout(perm_grid)
+        layout.addLayout(buttons)
+        self._details = details
+
+    def _apply(self) -> None:
+        from .fsmodel import bits_to_mode, set_permissions
+
+        bits = [False] * 9
+        for idx, box in self._boxes:
+            bits[idx] = box.isChecked()
+        mode = bits_to_mode(tuple(bits), self._details["mode"])
+        recursive = self.recursive.isChecked()
+        try:
+            set_permissions(self.path, mode)
+            if recursive:
+                for dirpath, dirnames, filenames in os.walk(self.path):
+                    for name in dirnames + filenames:
+                        try:
+                            set_permissions(os.path.join(dirpath, name), mode)
+                        except OSError as exc:
+                            QMessageBox.warning(
+                                self, tr("Свойства"),
+                                tr("Не удалось сменить права: {name}: {exc}").format(
+                                    name=name, exc=exc))
+        except OSError as exc:
+            QMessageBox.critical(self, tr("Свойства"),
+                                 tr("Не удалось сменить права: {exc}").format(exc=exc))
+            return
+        self.accept()
 
 
 class HotlistEditor(QDialog):

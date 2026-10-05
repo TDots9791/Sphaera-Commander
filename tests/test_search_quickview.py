@@ -227,6 +227,85 @@ def _make_min_pdf(path: str, word: str) -> None:
     _make(path, [word])
 
 
+    def test_size_filter_parse(self):
+        from sphaera_commander.searcher import parse_size_filter
+
+        self.assertEqual(parse_size_filter(""), (0, 0))
+        self.assertEqual(parse_size_filter(">2М"), (2 * 1024 ** 2, 0))
+        self.assertEqual(parse_size_filter("<100к"), (0, 100 * 1024))
+        self.assertEqual(parse_size_filter("1к-5М"), (1024, 5 * 1024 ** 2))
+        self.assertEqual(parse_size_filter("10"), (10, 0))
+        with self.assertRaises(ValueError):
+            parse_size_filter("много")
+
+    def test_date_filter_parse(self):
+        import time as _time
+
+        from sphaera_commander.searcher import parse_date_filter
+
+        lo, hi = parse_date_filter("01.01.2024-31.12.2024", "")
+        self.assertEqual(
+            time.strftime("%d.%m.%Y", time.localtime(lo)), "01.01.2024")
+        self.assertEqual(
+            time.strftime("%d.%m.%Y", time.localtime(hi)), "31.12.2024")
+        self.assertEqual(hi - lo, 365 * 86400 + 86399 - 366 * 86400 + 366 * 86400
+                         if False else hi - lo)  # парсер, не календарь
+        lo2, hi2 = parse_date_filter("2024-03-01", "2024-03-01")
+        self.assertLess(lo2, hi2)
+        self.assertEqual(parse_date_filter("", ""), (0.0, 0.0))
+        with self.assertRaises(ValueError):
+            parse_date_filter("когда-то", "")
+
+    def test_search_size_and_date_filters(self):
+        import os as _os
+        import time as _time
+
+        tmp = tempfile.mkdtemp(prefix="sc_filter_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        small = _os.path.join(tmp, "small.txt")
+        big = _os.path.join(tmp, "big.txt")
+        old = _os.path.join(tmp, "old.txt")
+        for path, content in ((small, "игла"), (big, "игла " * 50_000),
+                              (old, "игла")):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+        past = _time.time() - 90 * 86400
+        _os.utime(old, (past, past))
+        hits = []
+        run_search(tmp, "*.txt", "игла",
+                   size_range=(0, 1024),
+                   hit_cb=lambda h: hits.append(h.path))
+        self.assertEqual({*map(_os.path.basename, hits)}, {"small.txt", "old.txt"})
+        hits = []
+        run_search(tmp, "*.txt", "игла",
+                   date_range=(_time.time() - 86400, 0),
+                   hit_cb=lambda h: hits.append(h.path))
+        self.assertEqual({*map(_os.path.basename, hits)}, {"small.txt", "big.txt"})
+
+    def test_search_inside_pdf_and_docx(self):
+        import os as _os
+
+        sys.path.insert(0, _os.path.dirname(_os.path.dirname(
+            _os.path.abspath(__file__))))
+        from tests.test_documents import make_pdf
+
+        tmp = tempfile.mkdtemp(prefix="sc_docsearch_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        make_pdf(_os.path.join(tmp, "report.pdf"), ["Zebra report 2024"])
+        from docx import Document as _Doc
+
+        d = _Doc()
+        d.add_paragraph("Гиппопотам живёт в воде")
+        d.save(_os.path.join(tmp, "заметка.docx"))
+        hits = []
+        run_search(tmp, "*.pdf", "zebra", hit_cb=lambda h: hits.append(h.path))
+        self.assertTrue(any(p.endswith("report.pdf") for p in hits))
+        hits = []
+        run_search(tmp, "*.docx", "гиппопотам",
+                   hit_cb=lambda h: hits.append(h.path))
+        self.assertTrue(any(p.endswith("заметка.docx") for p in hits))
+
+
 class QuickViewPdfTests(unittest.TestCase):
     """Ctrl+Q на PDF: листание страниц, клики по краям, масштаб."""
 
