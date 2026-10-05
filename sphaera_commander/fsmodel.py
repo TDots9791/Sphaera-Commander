@@ -11,6 +11,7 @@ from PySide6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, QUrl
 from PySide6.QtGui import QBrush, QColor, QIcon
 from PySide6.QtWidgets import QApplication, QStyle
 
+from . import colorize
 from . import thumbnails
 from .i18n import plural, tr  # plural — реэкспорт (формы числительных)
 
@@ -360,6 +361,10 @@ class FileTableModel(QAbstractTableModel):
                 return QBrush(MARK_COLOR_DARK if dark else MARK_COLOR_LIGHT)
             if e.name in self.compared:
                 return QBrush(COMPARE_COLOR_DARK if dark else COMPARE_COLOR_LIGHT)
+            brush = colorize.brush_for(e.name, dark) \
+                if colorize.is_enabled() else None
+            if brush is not None:
+                return QBrush(brush)
             return None
         if role == Qt.TextAlignmentRole and col == SIZE_COL:
             return int(Qt.AlignRight | Qt.AlignVCenter)

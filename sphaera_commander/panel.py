@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from .archives import ArchiveBrowser, archive_format, norm_member
 from . import thumbnails
+from .buttonbar import ButtonBar
 from .fsmodel import (
     EXT_COL,
     DirStats,
@@ -260,6 +261,8 @@ class FilePanel(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(1)
         layout.addLayout(path_row)
+        self.button_bar = ButtonBar(self)
+        layout.addWidget(self.button_bar)
         layout.addWidget(self.view)
         layout.addWidget(self.status_label)
 

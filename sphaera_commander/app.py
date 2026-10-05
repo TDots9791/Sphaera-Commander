@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 from . import __version__, config, i18n
 from .cloudsync import rclone_remotes as cloudsync_remotes
 from .i18n import tr
-from . import cloudmount, mounts
+from . import cloudmount, hotlist, mounts
 from . import pluginmgr as plugins_mod
 from .archives import ArchiveBrowser, archive_format, pack_items, unpack_archive
 from .dialogs import (
@@ -299,6 +299,10 @@ class MainWindow(QMainWindow):
                               lambda: self.toggle_thumbnails(), checkable=True)
         self.act_thumbs.setChecked(config.qsettings().value(
             "view/thumbnails", "false") in (True, "true", "1"))
+        self.act_colorize = act(tr("Раскраска по типу"), None,
+                                lambda: self.toggle_colorize(), checkable=True)
+        self.act_colorize.setChecked(config.qsettings().value(
+            "view/colorize", "true") in (True, "true", "1"))
         self.act_brand = act(tr("Фирменная тёмная тема"), None,
                              lambda: self.toggle_brand_theme(), checkable=True)
         self.act_brand.setChecked(config.qsettings().value(
@@ -306,6 +310,7 @@ class MainWindow(QMainWindow):
         self.act_hidden = act(tr("Скрытые файлы"), "Ctrl+H",
                               lambda: self.toggle_hidden(), checkable=True)
         self.act_hidden.setChecked(self.show_hidden)
+        act(tr("Избранные папки (hotlist)"), "Ctrl+D", self._hotlist_menu)
         act(tr("Поменять панели местами"), "Ctrl+U", self.swap_panels)
         self.act_quick = act(tr("Быстрый просмотр (вторая панель)"), "Ctrl+Q",
                              self.toggle_quick_view, checkable=True)
@@ -345,8 +350,10 @@ class MainWindow(QMainWindow):
 
         m_view = self.menuBar().addMenu(tr("&Вид"))
         m_view.addAction(self.act_hidden)
+        m_view.addAction(self._find_action(tr("Избранные папки (hotlist)")))
         m_view.addAction(self.act_quick)
         m_view.addAction(self.act_thumbs)
+        m_view.addAction(self.act_colorize)
         m_view.addAction(self.act_brand)
         m_view.addAction(self._find_action(tr("Обновить")))
         m_view.addAction(self.act_fullscreen)
@@ -470,6 +477,16 @@ class MainWindow(QMainWindow):
         self.left.set_thumbnails(on)
         self.right.set_thumbnails(on)
         config.qsettings().setValue("view/thumbnails", on)
+
+    def toggle_colorize(self):
+        from . import colorize
+
+        on = self.act_colorize.isChecked()
+        colorize.set_enabled(on)
+        config.qsettings().setValue("view/colorize", on)
+        # ForegroundRole кэшируется вью: перерисовать модели обеих панелей
+        for panel in (self.left, self.right):
+            panel.model.layoutChanged.emit()
 
     # ------------------------------------------------------------- служебные
 
@@ -647,6 +664,34 @@ class MainWindow(QMainWindow):
             menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
         else:
             menu.exec(self.cursor().pos())
+
+    def _hotlist_menu(self):
+        """Ctrl+D: добавить текущую / перейти / изменить список (как в TC)."""
+        panel = self.active
+        menu = QMenu(tr("Избранные папки"), self)
+        menu.addAction(
+            tr("Добавить текущую папку"),
+            lambda: self._hotlist_add(panel.current_path()))
+        menu.addSeparator()
+        for item in hotlist.load_hotlist():
+            menu.addAction(
+                item.get("title") or item["path"],
+                lambda p=item["path"], pnl=panel: pnl.cd(p))
+        menu.addSeparator()
+        menu.addAction(tr("Изменить список…"), self._hotlist_edit)
+        menu.exec(self.cursor().pos())
+
+    def _hotlist_add(self, path: str):
+        hotlist.save_hotlist(
+            hotlist.add_current(path, hotlist.load_hotlist()))
+
+    def _hotlist_edit(self):
+        from .dialogs import HotlistEditor
+
+        dlg = HotlistEditor(self, hotlist.load_hotlist(),
+                            self.active.current_path())
+        if dlg.exec():
+            hotlist.save_hotlist(dlg.result_items())
 
     @staticmethod
     def _cloud_remotes() -> list[str]:
@@ -1109,7 +1154,7 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
         fmt, ok = QInputDialog.getItem(self, tr("Запаковать"), tr("Формат:"),
-                                       ("zip", "tar.gz", "tar.bz2", "tar.xz"), 0, False)
+                                       ("zip", "tar.gz", "tar.bz2", "tar.xz", "7z"), 0, False)
         if not ok:
             return
         out = os.path.join(dest_panel.current_path(), name.strip())

@@ -191,7 +191,9 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(archive_format("x.ZIP"), "zip")
         self.assertEqual(archive_format("x.tar.gz"), "tar")
         self.assertEqual(archive_format("x.tgz"), "tar")
-        self.assertIsNone(archive_format("x.rar"))
+        # 0.19.0: .7z/.rar распознаются (внешние утилиты 7z/unrar)
+        self.assertEqual(archive_format("x.7z"), "7z")
+        self.assertEqual(archive_format("x.rar"), "rar")
         self.assertIsNone(archive_format("x.zip.txt"))
 
     def _entries(self):

@@ -1,6 +1,11 @@
 """Архивы: запаковка, распаковка и browsing (VFS).
 
-Форматы: zip, tar, tar.gz, tar.bz2, tar.xz.
+Форматы: zip, tar, tar.gz, tar.bz2, tar.xz — встроенными средствами;
+7z и RAR — через внешние утилиты (7z/p7zip и unrar, без новых
+python-зависимостей): 7z — запаковка/распаковка/чтение, RAR — только
+чтение и распаковка (запись RAR невозможна — проприетарный формат);
+изменение состава VFS для внешних форматов в 0.19.0 не делается.
+Отсутствие утилиты — честная ошибка «не установлен», не падение.
 Симлинки сохраняются: в tar — нативно, в zip — общепринятым unix-способом
 (external_attr = S_IFLNK, содержимое = путь цели); распаковка восстанавливает.
 Распаковка защищена от zip-slip: абсолютные пути, ".." и Windows-диски
@@ -14,6 +19,7 @@ import os
 import re
 import shutil
 import stat
+import subprocess
 import tarfile
 import tempfile
 import time
@@ -36,7 +42,9 @@ PROGRESS_EVERY_FILES = 8
 
 ZIP_EXTS = (".zip",)
 TAR_EXTS = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")
-ARCHIVE_EXTS = ZIP_EXTS + TAR_EXTS
+SEVENZIP_EXTS = (".7z",)
+RAR_EXTS = (".rar",)
+ARCHIVE_EXTS = ZIP_EXTS + TAR_EXTS + SEVENZIP_EXTS + RAR_EXTS
 
 _DRIVE = re.compile(r"^[A-Za-z]:")
 
@@ -45,8 +53,19 @@ def archive_format(path: str) -> str | None:
     name = os.path.basename(path).lower()
     for ext in ARCHIVE_EXTS:
         if name.endswith(ext):
-            return "zip" if ext in ZIP_EXTS else "tar"
+            if ext in ZIP_EXTS:
+                return "zip"
+            if ext in SEVENZIP_EXTS:
+                return "7z"
+            if ext in RAR_EXTS:
+                return "rar"
+            return "tar"
     return None
+
+
+def external_tool(fmt: str) -> str | None:
+    """Путь к внешней утилите формата или None (graceful «не установлена»)."""
+    return shutil.which("7z" if fmt == "7z" else "unrar")
 
 
 def norm_member(name: str) -> str:
@@ -137,6 +156,32 @@ def pack_items(sources: list, out_path: str, fmt: str,
     progress_cb(_progress_state(0, total_files, 0, total_bytes, ""))
 
     try:
+        if fmt == "7z":
+            tool = external_tool("7z")
+            if tool is None:
+                result.errors.append(FileError(out_path, "7z (p7zip) не установлен"))
+                return result
+            # один вызов на все источники; прогресс грубый (до/после)
+            args = [tool, "a", "-bd", "--", out_path]
+            args += [i[0] for i in items]
+            proc = subprocess.run(args, capture_output=True, text=True,
+                                  timeout=600)
+            if is_cancelled():
+                result.cancelled = True
+                return result
+            if proc.returncode != 0:
+                result.errors.append(FileError(
+                    out_path, proc.stderr.strip() or "7z не смог упаковать"))
+                return result
+            result.done_files = total_files
+            result.done_bytes = total_bytes
+            progress_cb(_progress_state(total_files, total_files,
+                                        total_bytes, total_bytes, out_path))
+            return result
+        if fmt == "rar":
+            result.errors.append(FileError(
+                out_path, "запись RAR не поддерживается (проприетарный формат)"))
+            return result
         if fmt == "zip":
             with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for i, (full, arcname, size, kind) in enumerate(items):
@@ -222,12 +267,81 @@ def _tar_members(archive_path: str) -> list[tuple[str, int, str]]:
     return out
 
 
+def _7z_members(archive_path: str) -> list[tuple[str, int, str]]:
+    """Список членов 7z: `7z l -ba -slt` — блоки «Path = …», «Size = …»."""
+    tool = external_tool("7z")
+    if tool is None:
+        raise ValueError("7z (p7zip) не установлен — формат 7z недоступен")
+    proc = subprocess.run(
+        [tool, "l", "-ba", "-slt", "--", archive_path],
+        capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        raise OSError(proc.stderr.strip() or "7z не смог прочитать архив")
+    out: list[tuple[str, int, str]] = []
+    entry: dict[str, str] = {}
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            entry = {}
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key == "Path":
+            entry["path"] = value.strip()
+        elif key == "Size" and "size" not in entry:
+            entry["size"] = value.strip()
+        elif key == "Attributes":
+            entry["attrs"] = value.strip()
+        if {"path", "size", "attrs"} <= entry.keys():
+            name = entry["path"]
+            is_dir = entry["attrs"].find("D") >= 0 or name.endswith("/")
+            out.append((name, 0 if is_dir else _int_or_0(entry.get("size")),
+                        "dir" if is_dir else "file"))
+            entry = {}
+    return out
+
+
+def _rar_members(archive_path: str) -> list[tuple[str, int, str]]:
+    """Список членов RAR: `unrar lb -v` — только имена (без размеров:
+    каталоги-члены с завершающим «/»; размеры 0 — известное ограничение v1)."""
+    tool = external_tool("rar")
+    if tool is None:
+        raise ValueError("unrar не установлен — формат RAR недоступен")
+    proc = subprocess.run(
+        [tool, "lb", "-v", "--", archive_path],
+        capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0:
+        raise OSError(proc.stderr.strip() or "unrar не смог прочитать архив")
+    out = []
+    for line in proc.stdout.splitlines():
+        name = line.rstrip()
+        if not name or name.startswith(("---", "Volume")):
+            continue
+        if name.endswith("/"):
+            out.append((name, 0, "dir"))
+        else:
+            out.append((name, 0, "file"))
+    return out
+
+
+def _int_or_0(text: str | None) -> int:
+    try:
+        return int(text or 0)
+    except ValueError:
+        return 0
+
+
 def read_members(archive_path: str) -> list[tuple[str, int, str]]:
     fmt = archive_format(archive_path)
     if fmt == "zip":
         return _zip_members(archive_path)
     if fmt == "tar":
         return _tar_members(archive_path)
+    if fmt == "7z":
+        return _7z_members(archive_path)
+    if fmt == "rar":
+        return _rar_members(archive_path)
     raise ValueError(f"неизвестный формат архива: {archive_path}")
 
 
@@ -323,6 +437,38 @@ def unpack_archive(archive_path: str, dest_dir: str,
 
 
 def _extract_file(fmt: str, archive_path: str, member: str, target: str) -> None:
+    if fmt == "7z":
+        tool = external_tool("7z")
+        if tool is None:
+            raise OSError("7z (p7zip) не установлен")
+        proc = subprocess.run(
+            [tool, "e", "-so", "-bd", "--", archive_path, member],
+            capture_output=True, timeout=600)
+        if proc.returncode != 0:
+            raise OSError(proc.stderr.decode(errors="replace").strip()
+                          or "7z не смог извлечь элемент")
+        with open(target, "wb") as dst:
+            dst.write(proc.stdout)
+        return
+    if fmt == "rar":
+        tool = external_tool("rar")
+        if tool is None:
+            raise OSError("unrar не установлен")
+        tmp_dir = tempfile.mkdtemp(prefix=".sc_rar_",
+                                   dir=os.path.dirname(target))
+        try:
+            proc = subprocess.run(
+                [tool, "x", "-o+", "-idq", "--", archive_path, member,
+                 tmp_dir + "/"],
+                capture_output=True, text=True, timeout=600)
+            produced = os.path.join(tmp_dir, *member.split("/"))
+            if proc.returncode != 0 or not os.path.isfile(produced):
+                raise OSError(proc.stderr.strip()
+                              or "unrar не смог извлечь элемент")
+            os.replace(produced, target)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        return
     if fmt == "zip":
         with zipfile.ZipFile(archive_path) as zf:
             with zf.open(member) as src, open(target, "wb") as dst:
@@ -387,7 +533,13 @@ class ArchiveBrowser:
         self.members = []
         self._dirs = set()
         raw: list[tuple[str, int, str, float]] = []  # (имя, размер, тип, mtime)
-        if self.format == "zip":
+        if self.format in ("7z", "rar"):
+            for name, size, kind in read_members(self.archive_path):
+                norm = norm_member(name)
+                if not norm:
+                    continue
+                raw.append((norm, size, kind, 0.0))  # mtime у внешних форматов v1 не читается
+        elif self.format == "zip":
             with zipfile.ZipFile(self.archive_path) as zf:
                 for info in zf.infolist():
                     norm = norm_member(info.filename)
@@ -528,6 +680,11 @@ class ArchiveBrowser:
 
     def _rewrite(self, skip: set[str], replace: dict[str, str]) -> OpResult:
         result = OpResult()
+        if self.format in ("7z", "rar"):
+            what = "unrar/7z" if self.format == "rar" else "7z"
+            return OpResult(errors=[FileError(
+                self.archive_path,
+                "изменение состава {} не поддерживается — распакуйте и упакуйте заново".format(what))])
         tmp_fd, tmp_path = tempfile.mkstemp(
             prefix=".sc_rebuild_", dir=os.path.dirname(self.archive_path))
         os.close(tmp_fd)

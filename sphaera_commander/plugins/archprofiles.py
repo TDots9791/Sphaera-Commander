@@ -26,7 +26,7 @@ from sphaera_commander.plugin_api import SphaeraPlugin
 
 PROFILES_FILE = os.path.expanduser(
     "~/.config/sphaera-commander/archive-profiles.json")
-FORMATS = ("zip", "tar.gz", "tar.bz2", "tar.xz")
+FORMATS = ("zip", "tar.gz", "tar.bz2", "tar.xz", "7z")
 
 
 def load_profiles() -> list[dict]:

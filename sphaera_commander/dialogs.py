@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -771,3 +773,62 @@ class PluginsDialog(QDialog):
 
     def app_parent(self):
         return self.parent()
+
+
+class HotlistEditor(QDialog):
+    """Редактор избранных папок (Ctrl+D): добавить текущую / удалить."""
+
+    def __init__(self, parent, items: list[dict], current_dir: str):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Избранные папки"))
+        self.resize(520, 360)
+        self._items = [dict(i) for i in items]
+        self._current_dir = current_dir
+
+        self.list = QListWidget(self)
+        for i in self._items:
+            QListWidgetItem(f"{i.get('title') or i['path']}  —  {i['path']}",
+                            self.list)
+
+        row = QHBoxLayout()
+        btn_add = QPushButton(tr("Добавить текущую"))
+        btn_add.clicked.connect(self._add_current)
+        btn_del = QPushButton(tr("Удалить"))
+        btn_del.clicked.connect(self._delete)
+        row.addWidget(btn_add)
+        row.addWidget(btn_del)
+        row.addStretch(1)
+        btn_ok = QPushButton(tr("Сохранить"))
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel = QPushButton(tr("Отмена"))
+        btn_cancel.clicked.connect(self.reject)
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        bottom.addWidget(btn_ok)
+        bottom.addWidget(btn_cancel)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.list, 1)
+        layout.addLayout(row)
+        layout.addLayout(bottom)
+
+    def _refresh(self):
+        self.list.clear()
+        for i in self._items:
+            QListWidgetItem(f"{i.get('title') or i['path']}  —  {i['path']}",
+                            self.list)
+
+    def _add_current(self):
+        from sphaera_commander import hotlist
+
+        self._items = hotlist.add_current(self._current_dir, self._items)
+        self._refresh()
+
+    def _delete(self):
+        row = self.list.currentRow()
+        if 0 <= row < len(self._items):
+            del self._items[row]
+            self._refresh()
+
+    def result_items(self) -> list[dict]:
+        return self._items
