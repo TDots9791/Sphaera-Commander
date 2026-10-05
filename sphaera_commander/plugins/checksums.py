@@ -37,6 +37,56 @@ def _hash_file(path: str, algo: str, chunk: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def parse_sums_file(path: str) -> list[tuple[str, str]]:
+    """Строки (хеш, имя) из файла сумм (*.md5/*.sha1/*.sha256)."""
+    entries = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            digest, sep, name = line.partition(" ")
+            if not sep:
+                continue
+            entries.append((digest.strip("*"), name.strip().lstrip("*")))
+    return entries
+
+
+def find_sums_for(directory: str) -> list[str]:
+    return sorted(
+        os.path.join(directory, n) for n in os.listdir(directory)
+        if n.endswith((".md5", ".sha1", ".sha256", ".sha512")))
+
+
+def verify_against_sums(files: list[str], directory: str) -> tuple[list, list, list]:
+    """Проверить файлы по всем файлам сумм каталога.
+    Возвращает (проверено-ok, не совпало [(имя, файл)], нет записи [имя])."""
+    records: dict[str, tuple[str, str]] = {}  # имя → (хеш, алгоритм-файл)
+    algo_by_ext = {".md5": "MD5", ".sha1": "SHA-1",
+                   ".sha256": "SHA-256", ".sha512": "SHA-512"}
+    for sums in find_sums_for(directory):
+        algo = algo_by_ext.get(os.path.splitext(sums)[1].lower(), "MD5")
+        for digest, name in parse_sums_file(sums):
+            records.setdefault(os.path.basename(name), (digest, algo))
+    ok, bad, unknown = [], [], []
+    for path in files:
+        name = os.path.basename(path)
+        if name not in records:
+            unknown.append(name)
+            continue
+        digest, algo = records[name]
+        try:
+            actual = _hash_file(path, algo)
+        except OSError as exc:
+            bad.append((name, str(exc)))
+            continue
+        if actual == digest:
+            ok.append(name)
+        else:
+            bad.append((name, f"{digest[:12]}…"))
+    return ok, bad, unknown
+
+
 class ChecksumsDialog(QDialog):
     """Вычисление/сохранение/проверка контрольных сумм."""
 
@@ -182,8 +232,39 @@ class Plugin(SphaeraPlugin):
 
     def context_actions(self, panel, entry):
         if panel.selected_entries():
-            return [(tr("Контрольные суммы…"), self._open)]
+            return [(tr("Контрольные суммы…"), self._open),
+                    (tr("Проверить по файлу сумм"), self._verify_selected)]
         return []
+
+    def _verify_selected(self):
+        panel = self.app.active
+        files = [e.path for e in panel.selected_entries() if not e.is_dir]
+        if not files:
+            return
+        directory = panel.current_path()
+        if not find_sums_for(directory):
+            self.app._status(tr("В папке нет файлов сумм (.md5/.sha256)"))
+            return
+
+        def worker():
+            result = verify_against_sums(files, directory)
+            self.app.gui_call.emit(lambda: self._verify_report(result))
+
+        threading.Thread(target=worker, daemon=True,
+                         name="sumverify").start()
+
+    def _verify_report(self, result):
+        ok, bad, unknown = result
+        if bad:
+            details = "; ".join(f"{name} ({why})" for name, why in bad[:3])
+            self.app._status(tr("Не совпало: {n} — {details}").format(
+                n=len(bad), details=details))
+        elif unknown:
+            self.app._status(tr("Нет записи в файлах сумм: {n}").format(
+                n=len(unknown)))
+        else:
+            self.app._status(tr("Проверено: {n} — все суммы совпали").format(
+                n=len(ok)))
 
     def _open(self):
         from PySide6.QtWidgets import QDialog

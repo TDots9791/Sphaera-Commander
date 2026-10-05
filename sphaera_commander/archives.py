@@ -82,10 +82,18 @@ def _zip_link_info(arcname: str) -> zipfile.ZipInfo:
 
 def pack_items(sources: list, out_path: str, fmt: str,
                progress_cb: Callable[[Progress], None],
-               is_cancelled: Callable[[], bool]) -> OpResult:
-    """Запаковать объекты (FileEntry) в out_path. Каталоги — явно, включая пустые."""
+               is_cancelled: Callable[[], bool],
+               excludes: list[str] | None = None) -> OpResult:
+    """Запаковать объекты (FileEntry) в out_path. Каталоги — явно, включая пустые.
+    excludes — fnmatch-шаблоны имён (без пути), применяются к файлам и каталогам
+    внутри упаковываемых деревьев."""
+    import fnmatch
+
     result = OpResult()
     base = os.path.dirname(sources[0].path) if sources else "."
+
+    def _excluded(name: str) -> bool:
+        return any(fnmatch.fnmatch(name, pat) for pat in (excludes or []))
 
     # (путь | None, имя в архиве, размер, тип) — путь None у zip-заглушек каталогов
     items: list[tuple[str | None, str, int, str]] = []
@@ -97,6 +105,8 @@ def pack_items(sources: list, out_path: str, fmt: str,
             for dirpath, dirnames, filenames in os.walk(entry.path, followlinks=False):
                 dirnames.sort()
                 filenames.sort()
+                dirnames[:] = [d for d in dirnames if not _excluded(d)]
+                filenames = [f for f in filenames if not _excluded(f)]
                 rel_dir = os.path.relpath(dirpath, base)
                 if rel_dir != ".":
                     items.append((dirpath, rel_dir, 0, "dir"))
@@ -113,6 +123,8 @@ def pack_items(sources: list, out_path: str, fmt: str,
                     is_link = os.path.islink(full)
                     items.append((full, os.path.relpath(full, base),
                                   0 if is_link else size, "link" if is_link else "file"))
+        elif _excluded(entry.name):
+            continue
         else:
             try:
                 size = os.lstat(entry.path).st_size
