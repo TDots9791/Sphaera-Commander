@@ -252,9 +252,9 @@ class MainWindow(QMainWindow):
         self.right.view.context_requested.connect(
             lambda pos, p=self.right: self._context_menu(p, pos))
         self.left.view.drop_requested.connect(
-            lambda paths, target, p=self.left: self._on_drop(paths, target, p))
+            lambda paths, target, move, p=self.left: self._on_drop(paths, target, p, move))
         self.right.view.drop_requested.connect(
-            lambda paths, target, p=self.right: self._on_drop(paths, target, p))
+            lambda paths, target, move, p=self.right: self._on_drop(paths, target, p, move))
         self.left.entry_activated.connect(self._open_entry)
         self.right.entry_activated.connect(self._open_entry)
         self.left.cursor_changed.connect(
@@ -295,7 +295,7 @@ class MainWindow(QMainWindow):
         act(tr("Синхронизация с облаком…"), None, self.open_cloud_sync)
         act(tr("Открыть системным приложением"), "Ctrl+E", self.open_system)
         act(tr("Обновить"), "Ctrl+R", self.refresh_all)
-        self.act_thumbs = act(tr("Миниатюры картинок"), None,
+        self.act_thumbs = act(tr("Миниатюры (картинки и PDF)"), None,
                               lambda: self.toggle_thumbnails(), checkable=True)
         self.act_thumbs.setChecked(config.qsettings().value(
             "view/thumbnails", "false") in (True, "true", "1"))
@@ -303,10 +303,15 @@ class MainWindow(QMainWindow):
                                 lambda: self.toggle_colorize(), checkable=True)
         self.act_colorize.setChecked(config.qsettings().value(
             "view/colorize", "true") in (True, "true", "1"))
-        self.act_brand = act(tr("Фирменная тёмная тема"), None,
-                             lambda: self.toggle_brand_theme(), checkable=True)
-        self.act_brand.setChecked(config.qsettings().value(
-            "view/brand_theme", "true") in (True, "true", "1"))
+        self.act_theme_dark = act(tr("Тёмная тема (Iustitia)"), None,
+                                  lambda: self._set_theme("dark"),
+                                  checkable=True)
+        self.act_theme_light = act(tr("Светлая тема (пергамент)"), None,
+                                   lambda: self._set_theme("light"),
+                                   checkable=True)
+        self.act_theme_system = act(tr("Системная тема"), None,
+                                    lambda: self._set_theme("system"),
+                                    checkable=True)
         self.act_hidden = act(tr("Скрытые файлы"), "Ctrl+H",
                               lambda: self.toggle_hidden(), checkable=True)
         self.act_hidden.setChecked(self.show_hidden)
@@ -324,6 +329,10 @@ class MainWindow(QMainWindow):
             lambda: self._sort_active(EXT_COL))
         act(tr("Сортировка: дата"), "Ctrl+F5", lambda: self._sort_active(MTIME_COL))
         act(tr("Сортировка: размер"), "Ctrl+F6", lambda: self._sort_active(SIZE_COL))
+        self.act_dirsizes = act(tr("Размеры каталогов"), None,
+                                lambda: self.toggle_dirsizes(), checkable=True)
+        self.act_dirsizes.setChecked(config.qsettings().value(
+            "view/dirsizes", "false") in (True, "true", "1"))
         self.act_alt_f1 = act(tr("Левая панель: смена диска"), "Alt+F1",
                               lambda: self._places_menu(self.left))
         self.act_alt_f2 = act(tr("Правая панель: смена диска"), "Alt+F2",
@@ -354,7 +363,19 @@ class MainWindow(QMainWindow):
         m_view.addAction(self.act_quick)
         m_view.addAction(self.act_thumbs)
         m_view.addAction(self.act_colorize)
-        m_view.addAction(self.act_brand)
+        m_view.addAction(self.act_dirsizes)
+        m_theme = m_view.addMenu(tr("Тема"))
+        theme_group = QActionGroup(m_theme)
+        for a in (self.act_theme_dark, self.act_theme_light,
+                  self.act_theme_system):
+            theme_group.addAction(a)
+            a.setChecked(False)
+            m_theme.addAction(a)
+        from . import theme as theme_mod
+
+        mode = theme_mod.current_mode()
+        {"dark": self.act_theme_dark, "light": self.act_theme_light,
+         "system": self.act_theme_system}[mode].setChecked(True)
         m_view.addAction(self._find_action(tr("Обновить")))
         m_view.addAction(self.act_fullscreen)
         m_sort = m_view.addMenu(tr("Сортировка"))
@@ -456,21 +477,29 @@ class MainWindow(QMainWindow):
             self.right.set_show_hidden(True)
         if self.act_thumbs.isChecked():
             self.toggle_thumbnails()
+        if self.act_dirsizes.isChecked():
+            self.toggle_dirsizes()
         self.left.wait_loaded()
         self.right.wait_loaded()
 
-    def toggle_brand_theme(self):
-        from . import theme
+    def _set_theme(self, mode: str) -> None:
+        from . import theme as theme_mod
 
-        on = self.act_brand.isChecked()
-        config.qsettings().setValue("view/brand_theme", on)
-        app = QApplication.instance()
-        if on:
-            theme.apply_brand_theme(app)
-        else:
-            theme.revert_theme(app)
-        self._status(tr("Фирменная тёмная тема: ")
-                     + (tr("включена") if on else tr("выключена (системная)")))
+        config.qsettings().setValue("view/theme", mode)
+        theme_mod.apply_theme(QApplication.instance(), mode)
+        names = {"dark": tr("Тёмная тема (Iustitia)"),
+                 "light": tr("Светлая тема (пергамент)"),
+                 "system": tr("Системная тема")}
+        self._status(tr("Тема: {name}").format(name=names.get(mode, mode)))
+
+    def toggle_dirsizes(self):
+        """Показывать вычисленные размеры каталогов в колонке «Размер»."""
+        on = self.act_dirsizes.isChecked()
+        config.qsettings().setValue("view/dirsizes", on)
+        self.left.set_dirsizes(on)
+        self.right.set_dirsizes(on)
+        self._status(tr("Размеры каталогов: ")
+                     + (tr("включены") if on else tr("выключены")))
 
     def toggle_thumbnails(self):
         on = self.act_thumbs.isChecked()
@@ -889,12 +918,12 @@ class MainWindow(QMainWindow):
             return
         doc_kind = pv.document_kind(path)
         if doc_kind is not None:
-            # форматы со встроенной обработкой: pdf/docx/rtf/doc/xls
-            # редактируются, остальные (xlsx/pptx/csv/html/xml/fb2/epub) —
+            # форматы со встроенной обработкой: pdf/docx/rtf/doc/xls/xlsx
+            # редактируются, остальные (pptx/csv/html/xml/fb2/epub) —
             # только просмотр
             open_viewer(self, path, files,
                         editable=doc_kind in ("pdf", "docx", "rtf", "doc",
-                                              "xls")).exec()
+                                              "xls", "xlsx")).exec()
             return
         if browser is None:
             try:
@@ -1029,8 +1058,10 @@ class MainWindow(QMainWindow):
         if move:
             self.active.model.clear_marks()
 
-    def _on_drop(self, paths: list[str], target: str, panel: FilePanel) -> None:
-        """Файлы перетащили в панель (из другого приложения или между панелями)."""
+    def _on_drop(self, paths: list[str], target: str, panel: FilePanel,
+                 move: bool = False) -> None:
+        """Файлы перетащили в панель (из другого приложения или между панелями).
+        С Shift — перенос (как в TC), без — копирование."""
         if "::" in target:
             self._status(tr("В архив перетащить нельзя"))
             return
@@ -1045,7 +1076,7 @@ class MainWindow(QMainWindow):
             self._status(tr("Перетаскивать нечего: объекты уже в этой папке"))
             return
         try:
-            plan = plan_copy_move(entries, target, move=False)
+            plan = plan_copy_move(entries, target, move=move)
         except OSError as exc:
             QMessageBox.critical(self, tr("Ошибка"), tr("Не удалось построить план:\n{exc}").format(exc=exc))
             return
@@ -1055,15 +1086,22 @@ class MainWindow(QMainWindow):
             if policy == "cancel":
                 return
 
+        kind = KIND_MOVE if move else KIND_COPY
+        title = (tr("Перенос (перетащено): {n}") if move
+                 else tr("Копирование (перетащено): {n}")).format(n=len(entries))
+
         def fn(progress_cb, is_cancelled):
-            return execute(KIND_COPY, plan, entries, policy,
+            return execute(kind, plan, entries, policy,
                            progress_cb, is_cancelled, ask_cb=self._bridge.ask)
 
         def after(p=panel):
             self.refresh_all()
             p.refresh()
+            if move:
+                for pnl in (self.left, self.right):
+                    pnl.model.clear_marks()
 
-        self._enqueue_op(tr("Копирование (перетащено): {n}").format(n=len(entries)), fn, after=after)
+        self._enqueue_op(title, fn, after=after)
 
     def _extract_selected(self, move: bool) -> None:
         """Извлечение выбранных членов архива в противоположную панель (F5/F6)."""
@@ -1420,10 +1458,9 @@ def main(argv=None):
     app.setOrganizationName("Sphaera")
     app.setDesktopFileName("sphaera-commander")
     app.setWindowIcon(_app_icon())
-    if config.qsettings().value("view/brand_theme", "true") in (True, "true", "1"):
-        from . import theme
+    from . import theme
 
-        theme.apply_brand_theme(app)
+    theme.apply_theme(app, theme.current_mode())
     win = MainWindow()
     for panel, path in ((win.left, ns.paths[0] if ns.paths else None),
                         (win.right, ns.paths[1] if len(ns.paths) > 1 else None)):

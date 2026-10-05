@@ -72,13 +72,14 @@ def pdf_page_count(path: str) -> int:
         return len(pdf)
 
 
-def pdf_render(path: str, index: int, scale: float = 2.0) -> tuple[bytes, int, int, int]:
+def pdf_render(path: str, index: int, scale: float = 2.0,
+               draw_annots: bool = True) -> tuple[bytes, int, int, int]:
     """Отрисовать страницу: (BGR-данные, ширина, высота, stride)."""
     import pypdfium2 as pdfium
 
     with pdfium.PdfDocument(path) as pdf:
         page = pdf[index]
-        bitmap = page.render(scale=scale)
+        bitmap = page.render(scale=scale, draw_annots=draw_annots)
         return bytes(bitmap.buffer), bitmap.width, bitmap.height, bitmap.stride
 
 
@@ -148,6 +149,93 @@ def parse_ranges(text: str, maximum: int) -> list[int]:
     if not result:
         raise ValueError("пусто")
     return sorted({n for n in result if 0 <= n < maximum})
+
+
+# -- аннотации pdf ---------------------------------------------------------
+
+ANNOT_KINDS = ("highlight", "text", "freetext")
+
+
+def pdf_page_size(path: str, index: int) -> tuple[float, float]:
+    """(ширина, высота) страницы в пунктах PDF."""
+    import pypdfium2 as pdfium
+
+    with pdfium.PdfDocument(path) as pdf:
+        return tuple(pdf[index].get_size())
+
+
+def pdf_annot_list(path: str) -> list[dict]:
+    """Список аннотаций: [{page, index, subtype, rect, contents}].
+    rect — (x0, y0, x1, y1) в координатах PDF (начало — левый нижний угол)."""
+    from pypdf import PdfReader
+
+    out = []
+    reader = PdfReader(path)
+    for page_num, page in enumerate(reader.pages):
+        annots = page.get("/Annots")
+        if not annots:
+            continue
+        for i, ref in enumerate(annots):
+            try:
+                obj = ref.get_object()
+                rect = tuple(round(float(v), 2) for v in obj.get("/Rect",
+                                                             (0, 0, 0, 0)))
+                contents = str(obj.get("/Contents", "") or "")
+                subtype = str(obj.get("/Subtype", "")).lstrip("/")
+                out.append({"page": page_num, "index": i, "subtype": subtype,
+                            "rect": rect, "contents": contents})
+            except Exception:
+                continue
+    return out
+
+
+def pdf_add_annotation(path: str, page: int, kind: str,
+                       rect: tuple[float, float, float, float],
+                       contents: str = "") -> None:
+    """Добавить аннотацию (highlight/text/freetext) и перезаписать файл.
+    rect в координатах PDF; подсветка получает QuadPoints из прямоугольника."""
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.annotations import FreeText, Highlight, Text
+    from pypdf.generic import ArrayObject, FloatObject
+
+    reader = PdfReader(path)
+    writer = PdfWriter()
+    writer.append(reader)
+    if kind == "highlight":
+        x0, y0, x1, y1 = rect
+        quads = ArrayObject(
+            [FloatObject(v) for v in (x0, y1, x1, y1, x0, y0, x1, y0)])
+        annot = Highlight(rect=rect, quad_points=quads,
+                          highlight_color="ffe066", printing=True)
+    elif kind == "text":
+        annot = Text(rect=rect, text=contents)
+    elif kind == "freetext":
+        annot = FreeText(text=contents, rect=rect, font_size="10pt",
+                         font_color="202020", border_color="a6784f",
+                         background_color="fff8e1")
+    else:
+        raise ValueError(f"неизвестный тип аннотации: {kind}")
+    writer.add_annotation(page_number=page, annotation=annot)
+    _atomic_replace_write(path, writer)
+
+
+def pdf_delete_annotation(path: str, page: int, index: int) -> None:
+    """Удалить аннотацию по её индексу в /Annots страницы."""
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import ArrayObject, NameObject
+
+    reader = PdfReader(path)
+    writer = PdfWriter()
+    writer.append(reader)
+    page_obj = writer.pages[page]
+    annots = page_obj.get("/Annots")
+    if annots:
+        rest = [a for i, a in enumerate(annots) if i != index]
+        if rest:
+            page_obj[NameObject("/Annots")] = ArrayObject(rest)
+        else:
+            del page_obj[NameObject("/Annots")]
+    _atomic_replace_write(path, writer)
 
 
 # ---------------------------------------------------------------- docx
@@ -238,6 +326,201 @@ def xlsx_rows_iter(path: str, sheet_name: str):
             yield values
     finally:
         wb.close()
+
+
+def xlsx_sheet_raw(path: str, sheet_name: str):
+    """Сырое содержимое листа для правки и пересчёта формул.
+
+    Возвращает (rows_raw, formulas, cached):
+      rows_raw — строки сырых ячеек (формулы строками '=…', значения строками);
+      formulas — {(строка, колонка): '=…'} координаты формул;
+      cached   — {(строка, колонка): прежнее кэшированное значение} — seed
+                 для движка пересчёта (formulas.evaluate_sheet).
+    """
+    from openpyxl import load_workbook
+
+    rows_raw: list[list[str]] = []
+    formulas: dict[tuple, str] = {}
+    wb = load_workbook(path, data_only=False, read_only=True)
+    try:
+        ws = wb[sheet_name]
+        for r, row in enumerate(ws.iter_rows(values_only=True)):
+            values = []
+            for c, v in enumerate(row[:XLSX_MAX_COLS]):
+                if isinstance(v, str) and v.startswith("="):
+                    formulas[(r, c)] = v
+                values.append("" if v is None else str(v))
+            while values and values[-1] == "":
+                values.pop()
+            rows_raw.append(values)
+    finally:
+        wb.close()
+    cached: dict[tuple, object] = {}
+    wb = load_workbook(path, data_only=True, read_only=True)
+    try:
+        ws = wb[sheet_name]
+        for r, row in enumerate(ws.iter_rows(values_only=True)):
+            for c, v in enumerate(row[:XLSX_MAX_COLS]):
+                if v is not None:
+                    cached[(r, c)] = v
+    finally:
+        wb.close()
+    return rows_raw, formulas, cached
+
+
+def xlsx_save_cells(path: str, edited: dict[str, list[list[str]]],
+                    originals: dict[str, list[list[str]]]) -> None:
+    """Записать листы, изменённые в редакторе сетки.
+
+    edited — {имя листа: строки сырых ячеек}; originals — их состояние при
+    загрузке: неизменившиеся ячейки не переписываются (типы — даты, стили —
+    сохраняются), меняются только правленые.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path)
+    for name, rows in edited.items():
+        orig = originals.get(name) or []
+        ws = wb[name]
+        width = max(len(r) for r in rows) if rows else 0
+        for r, row in enumerate(rows):
+            old = orig[r] if r < len(orig) else []
+            for c in range(max(len(row), len(old))):
+                raw = row[c] if c < len(row) else ""
+                if c < len(old) and old[c] == raw:
+                    continue  # не менялось — тип и стиль сохраняются
+                ws.cell(row=r + 1, column=c + 1, value=_xlsx_typed(raw))
+    fd, tmp = tempfile.mkstemp(prefix=".sc_xlsx_", suffix=".xlsx",
+                               dir=os.path.dirname(path) or ".")
+    os.close(fd)
+    try:
+        wb.save(tmp)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _xlsx_typed(raw: str):
+    """Сырая строка сетки → значение для openpyxl (формула/число/логич./текст)."""
+    s = raw.strip()
+    if s.startswith("="):
+        return raw
+    if s.upper() == "TRUE":
+        return True
+    if s.upper() == "FALSE":
+        return False
+    num = s.replace(" ", "").replace(",", ".")
+    try:
+        f = float(num)
+        return int(f) if f.is_integer() and abs(f) < 1e15 else f
+    except ValueError:
+        return raw
+
+
+def _xlsx_sheet_xml_map(zf: zipfile.ZipFile) -> dict[str, str]:
+    """Имя листа → член архива с его XML (через workbook.xml + rels)."""
+    WB_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    REL_ID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+    PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+    workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+    rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    targets = {}
+    for rel in rels.findall(f"{{{PKG_NS}}}Relationship"):
+        if rel.get("Type", "").endswith("/worksheet"):
+            target = rel.get("Target", "")
+            if target.startswith("/"):
+                target = target[1:]
+            elif not target.startswith("xl/"):
+                target = "xl/" + target
+            targets[rel.get("Id")] = target
+    out = {}
+    for sheet in workbook.iter(f"{{{WB_NS}}}sheet"):
+        rid = sheet.get(REL_ID)
+        if rid in targets:
+            out[sheet.get("name")] = targets[rid]
+    return out
+
+
+def xlsx_inject_cached(path: str, cache: dict[str, dict[tuple, object]]) -> None:
+    """Вписать кэшированные значения формул в XML листов (после openpyxl.save:
+    openpyxl не пишет <v> у формул, и читатели без пересчёта показали бы пусто).
+    cache — {имя листа: {(строка, колонка): значение}}; координаты 0-based.
+    """
+    if not cache:
+        return
+    sheet_map = None
+    fd, tmp = tempfile.mkstemp(prefix=".sc_xlsx_v_", suffix=".xlsx",
+                               dir=os.path.dirname(path) or ".")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(path) as zin:
+            sheet_map = _xlsx_sheet_xml_map(zin)
+            wanted = {sheet_map[n]: n for n in cache if n in sheet_map}
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+                for member in zin.namelist():
+                    data = zin.read(member)
+                    if member in wanted:
+                        data = _xlsx_patch_sheet_xml(
+                            data, cache[wanted[member]])
+                    zout.writestr(member, data)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _xlsx_patch_sheet_xml(data: bytes, values: dict[tuple, object]) -> bytes:
+    """Вставить <v> в ячейки с <f>: числа/логические/строки/ошибки Excel."""
+    NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    ET.register_namespace("", NS)
+    root = ET.fromstring(data)
+    changed = False
+    for cell in root.iter(f"{{{NS}}}c"):
+        formula = cell.find(f"{{{NS}}}f")
+        if formula is None:
+            continue
+        ref = cell.get("r", "")
+        col_letters = "".join(ch for ch in ref if ch.isalpha())
+        row_digits = "".join(ch for ch in ref if ch.isdigit())
+        if not col_letters or not row_digits:
+            continue
+        col = 0
+        for ch in col_letters.upper():
+            col = col * 26 + (ord(ch) - 64)
+        coord = (int(row_digits) - 1, col - 1)
+        if coord not in values:
+            continue
+        v = values[coord]
+        for old in cell.findall(f"{{{NS}}}v"):
+            cell.remove(old)
+        ve = ET.SubElement(cell, f"{{{NS}}}v")
+        from sphaera_commander.formulas import ExcelError
+        from sphaera_commander.formulas import fmt_number_for_xml
+
+        if isinstance(v, ExcelError):
+            cell.set("t", "e")
+            ve.text = v.code
+        elif isinstance(v, bool):
+            cell.set("t", "b")
+            ve.text = "1" if v else "0"
+        elif isinstance(v, (int, float)):
+            if "t" in cell.attrib:
+                del cell.attrib["t"]
+            ve.text = fmt_number_for_xml(v)
+        else:
+            cell.set("t", "str")
+            ve.text = str(v)
+        changed = True
+    if not changed:
+        return data
+    return ET.tostring(root, encoding="UTF-8", xml_declaration=True)
 
 
 def csv_rows_iter(text: str, delimiter: str):

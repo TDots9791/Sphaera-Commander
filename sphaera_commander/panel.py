@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
 import tarfile
@@ -51,7 +52,7 @@ class FileView(QTableView):
     entry_activated = Signal(object)  # FileEntry | None
     mask_requested = Signal(bool)     # True — отметить по маске, False — снять
     context_requested = Signal(object)  # QPoint
-    drop_requested = Signal(list, str)  # [локальные пути], каталог назначения
+    drop_requested = Signal(list, str, bool)  # пути, каталог, Shift=перенос
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -121,8 +122,9 @@ class FileView(QTableView):
         if not paths:
             return
         target = self._drop_target_dir(event.position().toPoint())
+        move = bool(event.modifiers() & Qt.ShiftModifier)  # TC: Shift — перенос
         event.acceptProposedAction()
-        self.drop_requested.emit(paths, target)
+        self.drop_requested.emit(paths, target, move)
 
     def _on_header_clicked(self, section: int):
         self.model().apply_sort(section)
@@ -210,8 +212,9 @@ class FilePanel(QWidget):
     entry_activated = Signal(object)
     cursor_changed = Signal(object)  # FileEntry | None — для быстрого просмотра
     loaded = Signal(object)
-    drop_requested = Signal(list, str)  # [пути], каталог назначения
+    drop_requested = Signal(list, str, bool)  # [пути], каталог, Shift=перенос
     dir_info_ready = Signal(str, object)  # путь, DirStats — из фонового воркера
+    dir_size_ready = Signal(str, int, int)  # путь, размер, поколение
     drive_menu_requested = Signal()  # клик по кнопке дисков
 
     def __init__(self, parent=None):
@@ -281,6 +284,14 @@ class FilePanel(QWidget):
         threading.Thread(target=self._dirinfo_worker, daemon=True,
                          name="panel-dirinfo").start()
         self.dir_info_ready.connect(self._on_dir_info_ready)
+        # размеры каталогов (по включению «Вид → Размеры каталогов»)
+        self.dirsizes_on = False
+        self._dirsize_queue: queue.Queue = queue.Queue()
+        self._dirsize_pending: set[str] = set()
+        self._dirsize_lock = threading.Lock()
+        threading.Thread(target=self._dirsize_worker, daemon=True,
+                         name="panel-dirsize").start()
+        self.dir_size_ready.connect(self._on_dir_size_ready)
 
         self.model.dataChanged.connect(lambda *_: self.update_status())
         self.path_changed.connect(lambda _p: self._update_drive_label())
@@ -447,6 +458,7 @@ class FilePanel(QWidget):
         self._update_combo()
         self._update_completer()
         self.update_status()
+        self._schedule_dir_sizes()  # размеры каталогов, если включены
 
     def _watched_refresh(self) -> None:
         self.refresh()
@@ -494,6 +506,56 @@ class FilePanel(QWidget):
         cur = self.current_entry()
         if cur is not None and cur.path == path:
             self.update_status()
+
+    # -- размеры каталогов в колонке «Размер» (фон, по включению) ------------
+
+    def set_dirsizes(self, on: bool) -> None:
+        self.dirsizes_on = on
+        if not on:
+            self.model.dir_sizes.clear()
+            if self.model.entries:
+                self.model.dataChanged.emit(
+                    self.model.index(1, 0),
+                    self.model.index(len(self.model.entries), 0))
+            return
+        self._schedule_dir_sizes()
+
+    def _schedule_dir_sizes(self) -> None:
+        """Поставить в очередь подсчёт размеров всех каталогов текущего списка."""
+        if not self.dirsizes_on or self.is_vfs:
+            return
+        from . import cloudmount
+
+        gen = self._gen
+        for e in self.model.entries:
+            if not e.is_dir or e.name == "..":
+                continue
+            if cloudmount.is_cloud_path(e.path):
+                continue  # рекурсивный обход облака по сети — слишком дорого
+            with self._dirsize_lock:
+                if e.path in self._dirsize_pending:
+                    continue
+                self._dirsize_pending.add(e.path)
+            self._dirsize_queue.put((e.path, gen))
+
+    def _dirsize_worker(self) -> None:
+        """Рабочий поток: считает размер каталога за каталогом из очереди."""
+        while True:
+            path, gen = self._dirsize_queue.get()
+            try:
+                stats = dir_stats(path)
+            except OSError:
+                with self._dirsize_lock:
+                    self._dirsize_pending.discard(path)
+                continue
+            self.dir_size_ready.emit(path, stats.size, gen)
+
+    def _on_dir_size_ready(self, path: str, size: int, gen: int) -> None:
+        with self._dirsize_lock:
+            self._dirsize_pending.discard(path)
+        if gen != self._gen:
+            return  # список уже сменился
+        self.model.set_dir_size(path, size)
 
     def _on_path_edited(self) -> None:
         self.cd(self.path_combo.lineEdit().text())
@@ -558,7 +620,7 @@ class FilePanel(QWidget):
         self.refresh()
 
     def set_thumbnails(self, on: bool) -> None:
-        """Миниатюры картинок: фоновая генерация + кэш; размер иконки 64px."""
+        """Миниатюры картинок и PDF: фоновая генерация + кэш; иконка 64px."""
         self.model.set_thumbnails(on, thumbnails.store())
         self.view.setIconSize(QSize(64, 64) if on else QSize(20, 20))
         if self.model.entries:

@@ -15,10 +15,17 @@ from PySide6.QtGui import QIcon, QImage
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg",
               ".ico", ".tiff", ".tif")
+PDF_EXTS = (".pdf",)
 
 
 def is_image(path: str) -> bool:
     return os.path.splitext(path)[1].lower() in IMAGE_EXTS
+
+
+def is_thumbable(path: str) -> bool:
+    """Миниатюра возможна: картинка или PDF (первая страница, pdfium)."""
+    ext = os.path.splitext(path)[1].lower()
+    return ext in IMAGE_EXTS or ext in PDF_EXTS
 
 
 def cache_path(base_dir: str, path: str, mtime: float, size: int,
@@ -99,6 +106,8 @@ class ThumbnailStore(QObject):
     def _generate(path: str, disk: str) -> QIcon | None:
         try:
             img = QImage(path)
+            if img.isNull() and os.path.splitext(path)[1].lower() in PDF_EXTS:
+                img = ThumbnailStore._render_pdf_first_page(path)
             if img.isNull():
                 return None
             thumb = img.scaled(256, 256, Qt.KeepAspectRatio,
@@ -110,6 +119,21 @@ class ThumbnailStore(QObject):
             return QIcon(disk)
         except Exception:
             return None
+
+    @staticmethod
+    def _render_pdf_first_page(path: str) -> QImage:
+        """Первая страница PDF как QImage (BGR888 — грабли pypdfium2)."""
+        import pypdfium2 as pdfium
+        from PySide6.QtGui import QImage as _QImage
+
+        with pdfium.PdfDocument(path) as pdf:
+            page = pdf[0]
+            w, h = page.get_size()
+            scale = max(0.05, min(4.0, 256.0 / max(w, h)))
+            bitmap = page.render(scale=scale)
+            img = _QImage(bytes(bitmap.buffer), bitmap.width, bitmap.height,
+                          bitmap.stride, _QImage.Format.Format_BGR888)
+            return img.copy()  # буфер pdfium умирает вместе с bitmap
 
 
 _STORE: ThumbnailStore | None = None

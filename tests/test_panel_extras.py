@@ -196,6 +196,200 @@ class DragAndDropTests(unittest.TestCase):
         win.close()
 
 
+class DropMoveTests(unittest.TestCase):
+    """DnD: с Shift — перенос, без — копирование (как в TC)."""
+
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="sc_drop_")
+        self.src = os.path.join(self.tmp, "src")
+        os.makedirs(self.src)
+        for name in ("один.txt", "два.txt"):
+            with open(os.path.join(self.src, name), "w") as f:
+                f.write(name)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _run_op(self, win):
+        deadline = time.time() + 10
+        while time.time() < deadline and win._thread is not None:
+            QApplication.processEvents()
+            time.sleep(0.02)
+
+    def test_drop_with_move_moves_files(self):
+        from sphaera_commander.app import MainWindow
+
+        dest = os.path.join(self.tmp, "dest")
+        os.makedirs(dest)
+        win = MainWindow()
+        win.show()
+        win._on_drop([os.path.join(self.src, "один.txt"),
+                      os.path.join(self.src, "два.txt")], dest, win.left,
+                     move=True)
+        self._run_op(win)
+        self.assertTrue(os.path.isfile(os.path.join(dest, "один.txt")))
+        self.assertFalse(os.path.exists(os.path.join(self.src, "один.txt")))
+        self.assertFalse(os.path.exists(os.path.join(self.src, "два.txt")))
+        win.close()
+
+    def test_drop_without_move_copies(self):
+        from sphaera_commander.app import MainWindow
+
+        dest = os.path.join(self.tmp, "dest2")
+        os.makedirs(dest)
+        win = MainWindow()
+        win.show()
+        win._on_drop([os.path.join(self.src, "один.txt")], dest, win.left,
+                     move=False)
+        self._run_op(win)
+        self.assertTrue(os.path.isfile(os.path.join(dest, "один.txt")))
+        self.assertTrue(os.path.isfile(os.path.join(self.src, "один.txt")))
+        win.close()
+
+
+
+class DirSizesTests(unittest.TestCase):
+    """Размеры каталогов в колонке «Размер» (фон, по включению)."""
+
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="sc_dirsizes_")
+        self.root = os.path.join(self.tmp, "root")
+        sub = os.path.join(self.root, "папка")
+        deep = os.path.join(sub, "глубоко")
+        os.makedirs(deep)
+        with open(os.path.join(sub, "a.bin"), "wb") as f:
+            f.write(b"x" * 2048)
+        with open(os.path.join(deep, "b.bin"), "wb") as f:
+            f.write(b"y" * 1024)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_model_set_dir_size_updates_size_column(self):
+        from sphaera_commander.fsmodel import SIZE_COL, scan_directory
+
+        model = FileTableModel()
+        entries = scan_directory(self.root, False)
+        model.set_entries(self.root, entries)
+        row = model.row_of_name("папка")
+        self.assertEqual(model.index(row, SIZE_COL).data(), "<КАТ>")
+        self.assertTrue(model.set_dir_size(os.path.join(self.root, "папка"),
+                                           3072))
+        self.assertEqual(model.index(row, SIZE_COL).data(), "3 КиБ")
+        # отсутствующий путь запоминается, но строки нет
+        self.assertFalse(model.set_dir_size(os.path.join(self.root, "нет"), 1))
+
+    def test_panel_fills_sizes_in_background(self):
+        from sphaera_commander.panel import FilePanel
+
+        panel = FilePanel()
+        try:
+            panel.cd(self.root)
+            panel.wait_loaded()
+            panel.set_dirsizes(True)
+            row = panel.model.row_of_name("папка")
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                data = panel.model.index(row, 2).data()
+                if data != "<КАТ>":
+                    break
+                QApplication.processEvents()
+                time.sleep(0.02)
+            self.assertEqual(panel.model.index(row, 2).data(), "3 КиБ")
+            # выключение возвращает <КАТ>
+            panel.set_dirsizes(False)
+            self.assertEqual(panel.model.index(row, 2).data(), "<КАТ>")
+        finally:
+            panel.set_dirsizes(False)
+            panel.deleteLater()
+            QApplication.processEvents()
+
+
+class ThemeTests(unittest.TestCase):
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+
+    def tearDown(self):
+        from sphaera_commander import theme
+
+        theme.apply_brand_theme(self.app)
+
+    def test_light_theme_is_light_and_styled(self):
+        from sphaera_commander import theme
+
+        theme.apply_light_theme(self.app)
+        window_color = self.app.palette().color(
+            QPalette.ColorRole.Window)
+        self.assertGreater(window_color.lightness(), 200)
+        self.assertEqual(window_color.name().upper(),
+                         theme.PERGAMENT_WINDOW.upper())
+        self.assertTrue(theme.LIGHT_STYLESHEET.strip()
+                        in (self.app.styleSheet() or ""))
+
+    def test_apply_theme_modes(self):
+        from sphaera_commander import theme
+
+        theme.apply_theme(self.app, "light")
+        self.assertGreater(self.app.palette().color(
+            QPalette.ColorRole.Window).lightness(), 200)
+        theme.apply_theme(self.app, "dark")
+        self.assertLess(self.app.palette().color(
+            QPalette.ColorRole.Window).lightness(), 128)
+        theme.apply_theme(self.app, "system")
+        self.assertEqual(self.app.styleSheet(), "")
+
+    def test_current_mode_reads_config_with_legacy(self):
+        import unittest.mock
+
+        from sphaera_commander import config, theme
+
+        with unittest.mock.patch.object(config, "qsettings") as fake:
+            s = fake.return_value
+            s.value = lambda key, _d="": {"view/theme": "light"}.get(key, _d)
+            self.assertEqual(theme.current_mode(), "light")
+            s.value = lambda key, _d="": {"view/theme": "",
+                                          "view/brand_theme": "false"}.get(key, _d)
+            self.assertEqual(theme.current_mode(), "system")
+            s.value = lambda key, _d="": {"view/theme": "",
+                                          "view/brand_theme": "true"}.get(key, _d)
+            self.assertEqual(theme.current_mode(), "dark")
+
+
+class PdfThumbnailTests(unittest.TestCase):
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="sc_pdfthumb_")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_is_thumbable_includes_pdf(self):
+        self.assertTrue(thumbnails.is_thumbable("/x/doc.pdf"))
+        self.assertTrue(thumbnails.is_thumbable("/x/img.png"))
+        self.assertFalse(thumbnails.is_thumbable("/x/notes.txt"))
+
+    def test_pdf_thumbnail_generated(self):
+        import time as _time
+
+        sys.path.insert(0, os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        from tests.test_documents import make_pdf
+
+        pdf = os.path.join(self.tmp, "doc.pdf")
+        make_pdf(pdf, ["Hello"])
+        store = thumbnails.store()
+        icon = store.get(pdf, 1.0, 1000)
+        deadline = _time.time() + 10
+        while _time.time() < deadline and (icon is None or icon.isNull()):
+            QApplication.processEvents()
+            _time.sleep(0.05)
+            icon = store.get(pdf, 1.0, 1000)
+        self.assertIsNotNone(icon)
+        self.assertFalse(icon.isNull())
+
+
 class MountsTests(unittest.TestCase):
     FIXTURE = {
         "blockdevices": [

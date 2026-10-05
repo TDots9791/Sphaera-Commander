@@ -5,11 +5,18 @@
 Текст: автоопределение кодировки (utf-8 → utf-16 по BOM → cp1251 → latin-1),
 файлы больше лимита показываются частично с явной пометкой.
 Markdown: рендер предпросмотра (QTextDocument.setMarkdown); таблицы GFM
-реконструируются с рамками и выделенной шапкой.
+реконструируются с рамками и выделенной шапкой; в правке — живой предпросмотр
+рядом с исходником (дебаунс 400 мс, таблицы рендерятся по мере ввода).
 JSON: подсветка синтаксиса, форматирование (Ctrl+Shift+F), валидация с позицией
 ошибки, сворачиваемое дерево (Ctrl+T); при сохранении некорректного JSON —
 явный вопрос. Ctrl+E — открыть файл во внешнем приложении.
 Бинарные: hex-обзор (первые 2 МиБ). Изображения: масштабируемый просмотр.
+PDF в правке: аннотации (подсветка, заметка, текст на странице) + список
+с удалением; рендер с аннотациями (draw_annots).
+XLSX в правке: редактируемая сетка с формулами — свой движок пересчёта
+(formulas.py, ~50 функций, межлистовые ссылки, детекция циклов); Ctrl+S
+сохраняет формулы и вписывает кэшированные значения (openpyxl их не пишет),
+нетронутые ячейки не переписываются (типы и стили живут). fx — показать формулы.
 Правка: сохранение в той же кодировке (Ctrl+S), защита правок при закрытии.
 """
 
@@ -25,6 +32,7 @@ import xml.etree.ElementTree as ET
 from html import escape
 
 from PySide6.QtCore import (
+    QRect,
     QAbstractTableModel,
     QModelIndex,
     QUrl,
@@ -35,6 +43,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QCursor,
     QDesktopServices,
     QFont,
     QFontDatabase,
@@ -51,6 +60,7 @@ from PySide6.QtGui import (
     QTextTable,
 )
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QDialog,
     QComboBox,
@@ -63,7 +73,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QRubberBand,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QTableView,
     QTextBrowser,
@@ -148,6 +160,102 @@ class JsonHighlighter(QSyntaxHighlighter):
 
 
 # ---------------------------------------------------------------- редактор
+
+
+class PdfCanvas(QLabel):
+    """Отрисованная страница PDF с режимом аннотаций: рамка выделения,
+    сигналы прямоугольника и клика в координатах виджета."""
+
+    annot_drawn = Signal(object)   # QRect — прямоугольник выделения
+    annot_clicked = Signal(object)  # QPoint — клик (заметка)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.annot_mode: str | None = None
+        self._origin = None
+        self._band = QRubberBand(QRubberBand.Shape.Rectangle, self)
+
+    def set_annot_mode(self, mode: str | None) -> None:
+        self.annot_mode = mode
+        if mode:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.unsetCursor()
+
+    def mousePressEvent(self, event) -> None:
+        if self.annot_mode and event.button() == Qt.LeftButton:
+            self._origin = event.position().toPoint()
+            self._band.setGeometry(QRect(self._origin, QSize()))
+            self._band.show()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._origin is not None:
+            self._band.setGeometry(
+                QRect(self._origin, event.position().toPoint()).normalized())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._origin is not None and event.button() == Qt.LeftButton:
+            rect = QRect(self._origin, event.position().toPoint()).normalized()
+            self._origin = None
+            self._band.hide()
+            if rect.width() < 6 and rect.height() < 6:
+                self.annot_clicked.emit(rect.center())
+            else:
+                self.annot_drawn.emit(rect)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
+class AnnotListModel(QAbstractTableModel):
+    """Таблица аннотаций PDF: страница, тип, содержимое."""
+
+    COLUMNS = (tr("Страница"), tr("Тип"), tr("Текст"))
+
+    def __init__(self, path: str, parent=None):
+        super().__init__(parent)
+        self._items: list[dict] = []
+        self.reload(path)
+
+    def reload(self, path: str) -> None:
+        from sphaera_commander import previewers as pv
+
+        self.beginResetModel()
+        try:
+            self._items = pv.pdf_annot_list(path)
+        except Exception:
+            self._items = []
+        self.endResetModel()
+
+    def annot_at(self, row: int) -> dict | None:
+        return self._items[row] if 0 <= row < len(self._items) else None
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._items)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 3
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or role != Qt.DisplayRole:
+            return None
+        item = self._items[index.row()]
+        if index.column() == 0:
+            return str(item["page"] + 1)
+        if index.column() == 1:
+            return item["subtype"]
+        return item["contents"]
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole:
+            return self.COLUMNS[section]
+        return None
 
 
 class LineNumberArea(QWidget):
@@ -289,7 +397,12 @@ def collect_json_tree(data, root: "QTreeWidgetItem", _depth: int = 0) -> int:
 
 class SheetModel(QAbstractTableModel):
     """Таблица поверх списков строк: без QTableWidgetItem — держит
-    сотни тысяч строк, QTableView рисует только видимое."""
+    сотни тысяч строк, QTableView рисует только видимое.
+
+    Для xlsx хранит параллельно сырые ячейки (формулы строками '=…'),
+    координаты формул и вычисленные значения: правка ячейки запускает
+    пересчёт листа через recalc_hook (движок formulas.py), показ
+    переключается между значениями и формулами (show_raw)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -297,9 +410,37 @@ class SheetModel(QAbstractTableModel):
         self._cols = 0
         self.editable = False
         self.dirty = False
+        self.raw: list[list[str]] | None = None
+        self.formulas: dict[tuple, str] = {}
+        self.computed: dict[tuple, object] = {}
+        self.show_raw = False
+        self.recalc = None  # hook: пересчитать лист после правки (диалог)
 
     def rows(self) -> list[list[str]]:
         return self._rows
+
+    def start_xlsx(self, raw: list[list[str]], formulas: dict,
+                   computed: dict, display: list[list[str]]) -> None:
+        """Загрузить лист xlsx: сырые ячейки + что показать."""
+        self.beginResetModel()
+        self._rows = display
+        self._cols = max((len(r) for r in raw), default=0)
+        self.raw = [list(r) for r in raw]
+        self.formulas = dict(formulas)
+        self.computed = dict(computed)
+        self.dirty = False
+        self.endResetModel()
+
+    def start_plain(self, rows: list[list[str]]) -> None:
+        """Загрузить обычные строки (csv/xls) — без формульного слоя."""
+        self.beginResetModel()
+        self._rows = rows
+        self._cols = max((len(r) for r in rows), default=0)
+        self.raw = None
+        self.formulas = {}
+        self.computed = {}
+        self.dirty = False
+        self.endResetModel()
 
     def flags(self, index):
         base = super().flags(index)
@@ -311,18 +452,44 @@ class SheetModel(QAbstractTableModel):
         if not (self.editable and index.isValid()
                 and role == Qt.EditRole):
             return False
-        row = self._rows[index.row()]
-        while len(row) <= index.column():
-            row.append("")
-        row[index.column()] = str(value)
+        row, col = index.row(), index.column()
+        raw = str(value)
+        if self.raw is not None:
+            while len(self.raw) <= row:
+                self.raw.append([])
+            target = self.raw[row]
+            while len(target) <= col:
+                target.append("")
+            target[col] = raw
+            if raw.startswith("="):
+                self.formulas[(row, col)] = raw
+            else:
+                self.formulas.pop((row, col), None)
+                self.computed.pop((row, col), None)
+            if self.recalc is not None:
+                self.recalc()
+            self._cols = max(self._cols, col + 1)
+        else:
+            while len(self._rows) <= row:
+                self._rows.append([])
+            target = self._rows[row]
+            while len(target) <= col:
+                target.append("")
+            target[col] = raw
+            self._cols = max(self._cols, col + 1)
         self.dirty = True
-        self.dataChanged.emit(index, index)
+        self.dataChanged.emit(
+            self.index(0, 0),
+            self.index(max(0, len(self._rows) - 1), max(0, self._cols - 1)))
         return True
 
     def reset_rows(self) -> None:
         self.beginResetModel()
         self._rows = []
         self._cols = 0
+        self.raw = None
+        self.formulas = {}
+        self.computed = {}
         self.endResetModel()
 
     def append_rows(self, rows: list[list[str]]) -> None:
@@ -333,6 +500,12 @@ class SheetModel(QAbstractTableModel):
         self._rows.extend(rows)
         self._cols = max(self._cols, max((len(r) for r in rows), default=0))
         self.endInsertRows()
+
+    def apply_computed(self, computed: dict, display: list[list[str]]) -> None:
+        """Обновить показ после пересчёта (без сброса модели)."""
+        self.computed = dict(computed)
+        self._rows = display
+        self._cols = max((len(r) for r in display), default=0)
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self._rows)
@@ -345,6 +518,9 @@ class SheetModel(QAbstractTableModel):
             return None
         row = self._rows[index.row()]
         col = index.column()
+        if (self.show_raw and self.raw is not None
+                and (index.row(), col) in self.formulas):
+            return self.formulas[(index.row(), col)]
         return row[col] if col < len(row) else None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -382,11 +558,20 @@ class FileViewerDialog(QDialog):
         self._xls_sheets_cache: list[tuple[str, list[list[str]]]] = []
         self._deck: dict | None = None
         self._slides_text: list[tuple[int, str]] = []
+        self._xlsx_buffers: dict[str, dict] = {}  # лист → сырые данные/кэши
+        self._xlsx_dirty: set[str] = set()
+        self._pdf_page_wh = (0.0, 0.0)
+        self._md_live_path = ""
+        self._grid_current_name: str | None = None
         self.gridBatch.connect(self._on_grid_batch)
         self._json_timer = QTimer(self)
         self._json_timer.setSingleShot(True)
         self._json_timer.setInterval(500)
         self._json_timer.timeout.connect(self._update_json_status)
+        self._md_timer = QTimer(self)
+        self._md_timer.setSingleShot(True)
+        self._md_timer.setInterval(400)
+        self._md_timer.timeout.connect(self._render_live_md)
 
         self.setModal(True)
         self.resize(980, 680)
@@ -395,9 +580,20 @@ class FileViewerDialog(QDialog):
         self.text_edit.setReadOnly(not editable)
         self.text_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.text_edit.textChanged.connect(self._json_timer.start)
+        self.text_edit.textChanged.connect(self._md_timer.start)
         font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
         font.setPointSize(max(9, font.pointSize() or 10))
         self.text_edit.setFont(font)
+
+        # живой предпросмотр markdown (правая половина страницы исходника)
+        self.md_live = QTextBrowser()
+        self.md_live.setOpenExternalLinks(False)
+        self.md_live.hide()
+
+        self.edit_split = QSplitter(Qt.Horizontal)
+        self.edit_split.setChildrenCollapsible(False)
+        self.edit_split.addWidget(self.text_edit)
+        self.edit_split.addWidget(self.md_live)
 
         self.preview = QTextBrowser()
         self.preview.setOpenExternalLinks(True)
@@ -417,7 +613,7 @@ class FileViewerDialog(QDialog):
         doc_layout.addWidget(self.preview, 1)
 
         # -- страница PDF: рендер страницы + текстовый слой + правка
-        self.pdf_label = QLabel()
+        self.pdf_label = PdfCanvas()
         self.pdf_label.setAlignment(Qt.AlignCenter)
         self.pdf_scroll = QScrollArea()
         self.pdf_scroll.setWidgetResizable(True)
@@ -459,10 +655,48 @@ class FileViewerDialog(QDialog):
         pdf_bar.addWidget(self.btn_pdf_rot_right)
         pdf_bar.addWidget(self.btn_pdf_delete)
         pdf_bar.addWidget(self.btn_pdf_export)
+        # -- панель аннотаций (только в правке)
+        self.btn_annot_highlight = QPushButton(tr("Выделение"))
+        self.btn_annot_highlight.setCheckable(True)
+        self.btn_annot_highlight.setToolTip(
+            tr("Выделить фрагмент: обведите его мышью"))
+        self.btn_annot_highlight.toggled.connect(
+            lambda on: self._annot_mode("highlight", on))
+        self.btn_annot_note = QPushButton(tr("Заметка"))
+        self.btn_annot_note.setCheckable(True)
+        self.btn_annot_note.setToolTip(tr("Прикрепить заметку: клик по странице"))
+        self.btn_annot_note.toggled.connect(
+            lambda on: self._annot_mode("text", on))
+        self.btn_annot_freetext = QPushButton(tr("Текст на странице"))
+        self.btn_annot_freetext.setCheckable(True)
+        self.btn_annot_freetext.setToolTip(
+            tr("Добавить видимый текст: обведите область"))
+        self.btn_annot_freetext.toggled.connect(
+            lambda on: self._annot_mode("freetext", on))
+        self.btn_annot_list = QPushButton(tr("Аннотации…"))
+        self.btn_annot_list.clicked.connect(self._annot_list_dialog)
+        annot_bar = QHBoxLayout()
+        annot_bar.addWidget(QLabel(tr("Аннотации:")))
+        annot_bar.addWidget(self.btn_annot_highlight)
+        annot_bar.addWidget(self.btn_annot_note)
+        annot_bar.addWidget(self.btn_annot_freetext)
+        annot_bar.addStretch(1)
+        annot_bar.addWidget(self.btn_annot_list)
+        self.annot_bar_widget = QWidget()
+        self.annot_bar_widget.setLayout(annot_bar)
+        self.annot_bar_widget.hide()
+        self.pdf_label.annot_drawn.connect(self._annot_from_rect)
+        self.pdf_label.annot_clicked.connect(self._annot_from_click)
+        self._ANNOT_BUTTONS = {
+            "highlight": self.btn_annot_highlight,
+            "text": self.btn_annot_note,
+            "freetext": self.btn_annot_freetext,
+        }
         pdf_page = QWidget()
         pdf_layout = QVBoxLayout(pdf_page)
         pdf_layout.setContentsMargins(0, 0, 0, 0)
         pdf_layout.addLayout(pdf_bar)
+        pdf_layout.addWidget(self.annot_bar_widget)
         pdf_layout.addWidget(self.pdf_inner, 1)
 
         # -- страница таблиц (csv/xlsx): модель + фоновая загрузка
@@ -476,14 +710,22 @@ class FileViewerDialog(QDialog):
         self.grid.verticalHeader().hide()
         self.grid.horizontalHeader().setSectionResizeMode(
             QHeaderView.Interactive)
+        self.btn_grid_raw = QPushButton("fx")
+        self.btn_grid_raw.setCheckable(True)
+        self.btn_grid_raw.setToolTip(tr("Показывать формулы вместо значений"))
+        self.btn_grid_raw.toggled.connect(self._toggle_grid_raw)
+        self.btn_grid_raw.hide()
+        grid_bar = QHBoxLayout()
+        grid_bar.addWidget(self.sheet_combo, 1)
+        grid_bar.addWidget(self.btn_grid_raw)
         grid_page = QWidget()
         grid_layout = QVBoxLayout(grid_page)
         grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.addWidget(self.sheet_combo)
+        grid_layout.addLayout(grid_bar)
         grid_layout.addWidget(self.grid, 1)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(self.text_edit)  # 0 — исходник/текст
+        self.stack.addWidget(self.edit_split)  # 0 — исходник/текст (+md живой)
         self.stack.addWidget(doc_page)        # 1 — рендер (md/html/fb2/epub/pptx)
         self.stack.addWidget(self.tree)       # 2 — дерево json/xml
         self.stack.addWidget(pdf_page)        # 3 — pdf
@@ -618,6 +860,11 @@ class FileViewerDialog(QDialog):
         self.btn_preview.hide()
         self._hide_doc_widgets()
         self._set_preview(False, force=True)
+        if self._md_live_path != path:
+            self._xlsx_buffers.clear()
+            self._xlsx_dirty.clear()
+            self._grid_current_name = None
+            self._md_live_path = path
 
         ext_kind = pv.document_kind(path)
         if ext_kind is not None:
@@ -677,6 +924,12 @@ class FileViewerDialog(QDialog):
             self.kind = "md"
             self.btn_preview.show()
             self._set_preview(not self.editable)  # F3 — рендер, F4 — исходник
+            if self.editable:
+                # живой рендер (таблиц в том числе) рядом с исходником
+                total = max(1, self.edit_split.width())
+                self.md_live.show()
+                self.edit_split.setSizes([int(total * 0.58), int(total * 0.42)])
+                self._render_live_md()
         else:
             self.kind = "text"
             self.lbl_info.setText(self._info_base)
@@ -701,6 +954,13 @@ class FileViewerDialog(QDialog):
         self.doc_combo.hide()
         self.sheet_combo.hide()
         self.btn_pdf_text.setChecked(False)
+        self.btn_annot_highlight.setChecked(False)
+        self.btn_annot_note.setChecked(False)
+        self.btn_annot_freetext.setChecked(False)
+        self.annot_bar_widget.hide()
+        self.btn_grid_raw.hide()
+        self.btn_grid_raw.setChecked(False)
+        self.md_live.hide()
 
     def _load_document(self, path: str, kind: str) -> None:
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -749,6 +1009,7 @@ class FileViewerDialog(QDialog):
         for b in (self.btn_pdf_rot_left, self.btn_pdf_rot_right,
                   self.btn_pdf_delete, self.btn_pdf_export):
             b.setVisible(self.editable)
+        self.annot_bar_widget.setVisible(self.editable)
         self.stack.setCurrentIndex(3)
         self.search.setEnabled(False)
         self.btn_replace_toggle.hide()
@@ -771,6 +1032,10 @@ class FileViewerDialog(QDialog):
             return
         data, w, h, stride = pv.pdf_render(self._pdf_path, self._pdf_index,
                                            self._pdf_scale)
+        try:
+            self._pdf_page_wh = pv.pdf_page_size(self._pdf_path, self._pdf_index)
+        except Exception:
+            self._pdf_page_wh = (w / self._pdf_scale, h / self._pdf_scale)
         img = QImage(data, w, h, stride, QImage.Format.Format_BGR888)
         self.pdf_label.setPixmap(QPixmap.fromImage(img.copy()))
         self.lbl_pdf_page.setText(tr("стр. {n} из {total}").format(n=self._pdf_index + 1, total=self._pdf_count))
@@ -848,6 +1113,124 @@ class FileViewerDialog(QDialog):
         pv.pdf_export_pages(self._pdf_path, indices, out)
         QMessageBox.information(self, tr("Экспорт"),
                                 tr("Сохранено страниц: {n}\n{out}").format(n=len(indices), out=out))
+
+    # аннотации pdf ---------------------------------------------------------
+
+    _ANNOT_BUTTONS = None  # заполняется в __init__ (mode → кнопка)
+
+    def _annot_mode(self, mode: str, on: bool) -> None:
+        if self._ANNOT_BUTTONS is None:
+            return
+        if not on:
+            if self.pdf_label.annot_mode == mode:
+                self.pdf_label.set_annot_mode(None)
+            return
+        for m, btn in self._ANNOT_BUTTONS.items():
+            if m != mode:
+                btn.setChecked(False)
+        self.pdf_label.set_annot_mode(mode)
+
+    def _pdf_rect_from_widget(self, rect: QRect) -> tuple:
+        """Прямоугольник виджета (пиксели) → координаты PDF (пункты, y вверх)."""
+        scale = max(0.01, self._pdf_scale)
+        _w, h_pt = self._pdf_page_wh
+        x0, x1 = sorted((rect.left() / scale, rect.right() / scale))
+        y0, y1 = sorted((h_pt - rect.bottom() / scale,
+                         h_pt - rect.top() / scale))
+        return (round(x0, 1), round(y0, 1), round(x1, 1), round(y1, 1))
+
+    def _annot_from_rect(self, rect: QRect) -> None:
+        mode = self.pdf_label.annot_mode
+        if self.kind != "pdf" or mode not in ("highlight", "freetext"):
+            return
+        prect = self._pdf_rect_from_widget(rect)
+        if mode == "highlight":
+            try:
+                pv.pdf_add_annotation(self._pdf_path, self._pdf_index,
+                                      "highlight", prect)
+            except Exception as exc:
+                QMessageBox.warning(self, tr("Аннотации"),
+                                    tr("Не удалось добавить: {exc}").format(exc=exc))
+                return
+            self._page_show()
+            return
+        text, ok = QInputDialog.getMultiLineText(
+            self, tr("Текст на странице"), tr("Текст:"))
+        if not (ok and text.strip()):
+            return
+        try:
+            pv.pdf_add_annotation(self._pdf_path, self._pdf_index,
+                                  "freetext", prect, text.strip())
+        except Exception as exc:
+            QMessageBox.warning(self, tr("Аннотации"),
+                                tr("Не удалось добавить: {exc}").format(exc=exc))
+            return
+        self._page_show()
+
+    def _annot_from_click(self, pos) -> None:
+        if self.kind != "pdf" or self.pdf_label.annot_mode != "text":
+            return
+        text, ok = QInputDialog.getMultiLineText(
+            self, tr("Заметка"), tr("Текст заметки:"))
+        if not (ok and text.strip()):
+            return
+        scale = max(0.01, self._pdf_scale)
+        _w, h_pt = self._pdf_page_wh
+        x = pos.x() / scale
+        y = h_pt - pos.y() / scale
+        try:
+            pv.pdf_add_annotation(self._pdf_path, self._pdf_index, "text",
+                                  (round(x, 1), round(y, 1),
+                                   round(x + 18, 1), round(y + 18, 1)),
+                                  text.strip())
+        except Exception as exc:
+            QMessageBox.warning(self, tr("Аннотации"),
+                                tr("Не удалось добавить: {exc}").format(exc=exc))
+            return
+        self._page_show()
+
+    def _annot_list_dialog(self) -> None:
+        """Список аннотаций файла с удалением выбранных."""
+        if self.kind != "pdf":
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("Аннотации PDF"))
+        table = QTableView(dlg)
+        model = AnnotListModel(self._pdf_path, dlg)
+        table.setModel(model)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        btn_del = QPushButton(tr("Удалить выбранные"), dlg)
+        btn_close = QPushButton(tr("Закрыть"), dlg)
+
+        def delete_selected():
+            rows = sorted({idx.row() for idx in table.selectionModel()
+                           .selectedRows()}, reverse=True)
+            for row in rows:
+                item = model.annot_at(row)
+                if item is None:
+                    continue
+                try:
+                    pv.pdf_delete_annotation(self._pdf_path, item["page"],
+                                             item["index"])
+                except Exception as exc:
+                    QMessageBox.warning(self, tr("Аннотации"),
+                                        tr("Не удалось удалить: {exc}").format(exc=exc))
+                    return
+            model.reload(self._pdf_path)
+            self._page_show()
+
+        btn_del.clicked.connect(delete_selected)
+        btn_close.clicked.connect(dlg.accept)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(table, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(btn_del)
+        row.addWidget(btn_close)
+        layout.addLayout(row)
+        dlg.resize(560, 400)
+        dlg.exec()
 
     # docx -------------------------------------------------------------------
 
@@ -978,6 +1361,8 @@ class FileViewerDialog(QDialog):
     def _load_xlsx(self, path: str) -> None:
         self.kind = "xlsx"
         names = pv.xlsx_sheet_names(path)
+        if not names:
+            raise ValueError(tr("в книге нет листов"))
         self._grid_sources = [("xlsx", path, name) for name in names]
         self.sheet_combo.blockSignals(True)
         self.sheet_combo.clear()
@@ -986,7 +1371,25 @@ class FileViewerDialog(QDialog):
         self.sheet_combo.blockSignals(False)
         self.sheet_combo.setVisible(len(names) > 1)
         self._select_sheet(0)
+        self._prefetch_other_sheets(path, names[1:])
         self.stack.setCurrentIndex(4)
+
+    def _prefetch_other_sheets(self, path: str, names: list[str]) -> None:
+        """Фоновая сырая загрузка остальных листов: переключение мгновенное,
+        кросс-ссылки при пересчёте видят все листы."""
+        def worker():
+            for name in names:
+                if name in self._xlsx_buffers:
+                    continue
+                try:
+                    rows, formulas, cached = pv.xlsx_sheet_raw(path, name)
+                except Exception:
+                    continue
+                self.gridBatch.emit({"prefetch": name, "rows": rows,
+                                     "formulas": formulas, "cached": cached})
+
+        threading.Thread(target=worker, daemon=True,
+                         name="xlsx-prefetch").start()
 
     def _load_csv(self, path: str) -> None:
         self.kind = "csv"
@@ -1004,43 +1407,182 @@ class FileViewerDialog(QDialog):
             return
         kind, a, b = self._grid_sources[index]
         if kind == "rows":
-            self.sheet_model.reset_rows()
+            self._grid_current_name = None
+            self.sheet_model.recalc = None
+            self.sheet_model.editable = self.editable
+            self.sheet_model.start_plain([list(r) for r in b])
             self._grid_info_base = info_base
-            self.sheet_model.append_rows(b)
             self.lbl_info.setText((info_base + " • " if info_base else "")
                                   + tr("строк: {n}").format(n=self.sheet_model.rowCount()))
             return
         if kind == "xlsx":
-            factory = lambda: pv.xlsx_rows_iter(a, b)  # noqa: E731
+            self._sync_current_sheet_buffer()  # правки прежнего листа
+            factory = lambda: pv.xlsx_sheet_raw(a, b)  # noqa: E731
             title = b
+            xlsx_name = b
         else:
+            self._grid_current_name = None
+            self.sheet_model.recalc = None
             factory = lambda: pv.csv_rows_iter(a, b)  # noqa: E731
             title = "CSV"
-        self._start_grid_load(factory, title, info_base)
+            xlsx_name = None
+        if xlsx_name is not None and xlsx_name in self._xlsx_buffers:
+            self._apply_xlsx_buffer(xlsx_name, info_base)
+            return
+        self._start_grid_load(factory, title, info_base, sheet_name=xlsx_name)
 
-    def _start_grid_load(self, factory, title: str, info_base: str = "") -> None:
+    def _start_grid_load(self, factory, title: str, info_base: str = "",
+                         sheet_name: str | None = None) -> None:
         self.sheet_model.reset_rows()
         self._grid_info_base = info_base
         self.lbl_info.setText((info_base + " • " if info_base else "")
                               + tr("чтение {title}…").format(title=title))
         self._grid_error = ""
 
-        def worker():
-            batch: list[list[str]] = []
-            try:
-                for row in factory():
-                    batch.append(row)
-                    if len(batch) >= pv.GRID_BATCH:
-                        self.gridBatch.emit({"rows": batch})
-                        batch = []
-                self.gridBatch.emit({"rows": batch, "done": True})
-            except Exception as exc:  # битый файл — сообщим в статус
-                self.gridBatch.emit({"rows": batch, "done": True,
-                                     "error": str(exc)})
+        if sheet_name is not None:
+            # xlsx: сырые ячейки целиком (формулы + кэши) одним куском
+            self._grid_current_name = sheet_name  # батч применится к нему
+
+            def worker():
+                try:
+                    rows, formulas, cached = factory()
+                    self.gridBatch.emit({"sheet": sheet_name, "rows": rows,
+                                         "formulas": formulas,
+                                         "cached": cached, "done": True})
+                except Exception as exc:  # битый файл — сообщим в статус
+                    self.gridBatch.emit({"sheet": sheet_name, "rows": [],
+                                         "formulas": {}, "cached": {},
+                                         "done": True, "error": str(exc)})
+        else:
+            def worker():
+                batch: list[list[str]] = []
+                try:
+                    for row in factory():
+                        batch.append(row)
+                        if len(batch) >= pv.GRID_BATCH:
+                            self.gridBatch.emit({"rows": batch})
+                            batch = []
+                    self.gridBatch.emit({"rows": batch, "done": True})
+                except Exception as exc:  # битый файл — сообщим в статус
+                    self.gridBatch.emit({"rows": batch, "done": True,
+                                         "error": str(exc)})
 
         threading.Thread(target=worker, daemon=True, name="grid-load").start()
 
+    @staticmethod
+    def _xlsx_display_rows(rows, formulas, computed, cached) -> list[list[str]]:
+        """Что показать: вычисленное/кэшированное значение формулы или сырьё."""
+        from sphaera_commander import formulas as fm
+
+        out = []
+        for r, row in enumerate(rows):
+            disp = []
+            for c, raw in enumerate(row):
+                if (r, c) in formulas:
+                    if (r, c) in computed:
+                        disp.append(fm.fmt_value(computed[(r, c)]))
+                    elif (r, c) in cached:
+                        disp.append(fm.fmt_value(cached[(r, c)]))
+                    else:
+                        disp.append(raw)  # нет кэша — честно показать формулу
+                else:
+                    disp.append(fm.fmt_value(fm.cell_value(raw)))
+            out.append(disp)
+        return out
+
+    def _apply_xlsx_buffer(self, name: str, info_base: str = "") -> None:
+        buf = self._xlsx_buffers[name]
+        self._grid_current_name = name
+        self.sheet_model.recalc = self._recalc_sheet
+        self.sheet_model.editable = self.editable
+        display = self._xlsx_display_rows(buf["raw"], buf["formulas"],
+                                          buf.get("computed") or {},
+                                          buf["cached"])
+        self.sheet_model.start_xlsx(buf["raw"], buf["formulas"],
+                                    buf.get("computed") or {}, display)
+        self.btn_grid_raw.setVisible(True)
+        base = info_base or self._grid_info_base
+        self.lbl_info.setText(
+            (base + " • " if base else "")
+            + tr("строк: {n} • формул: {f}").format(
+                n=self.sheet_model.rowCount(), f=len(buf["formulas"])))
+
+    def _sync_current_sheet_buffer(self) -> None:
+        """Правки сетки текущего листа — в буфер (перед переключением/сохранением)."""
+        name = getattr(self, "_grid_current_name", None)
+        if name is None or self.sheet_model.raw is None:
+            return
+        buf = self._xlsx_buffers.get(name)
+        if buf is None:
+            return
+        buf["raw"] = [list(r) for r in self.sheet_model.raw]
+        buf["formulas"] = dict(self.sheet_model.formulas)
+        buf["computed"] = dict(self.sheet_model.computed)
+
+    def _xlsx_context(self):
+        from sphaera_commander import formulas as fm
+
+        return fm.Context({name: buf["raw"]
+                           for name, buf in self._xlsx_buffers.items()})
+
+    def _recalc_sheet(self) -> None:
+        """Пересчёт листа после правки ячейки (hook модели)."""
+        from sphaera_commander import formulas as fm
+
+        name = self._grid_current_name
+        buf = self._xlsx_buffers.get(name)
+        if buf is None or self.sheet_model.raw is None:
+            return
+        rows = [list(r) for r in self.sheet_model.raw]
+        vals, _n, failed, unstable = fm.evaluate_sheet(
+            rows, self._xlsx_context(), name, seed=buf["cached"])
+        # не пересчитавшееся (цикл, непонятная формула) — прежний кэш файла
+        for coord in list(failed) + list(unstable):
+            if coord in buf["cached"]:
+                vals[coord] = buf["cached"][coord]
+        buf["raw"] = rows
+        buf["formulas"] = dict(self.sheet_model.formulas)
+        buf["computed"] = vals
+        self._xlsx_dirty.add(name)
+        self.sheet_model.apply_computed(
+            vals, self._xlsx_display_rows(rows, buf["formulas"], vals,
+                                          buf["cached"]))
+
+    def _toggle_grid_raw(self, on: bool) -> None:
+        self.sheet_model.show_raw = on
+        if self.sheet_model.raw is not None and self.sheet_model.rowCount():
+            self.sheet_model.dataChanged.emit(
+                self.sheet_model.index(0, 0),
+                self.sheet_model.index(self.sheet_model.rowCount() - 1,
+                                       self.sheet_model.columnCount() - 1))
+
     def _on_grid_batch(self, payload: dict) -> None:
+        if "prefetch" in payload:
+            name = payload["prefetch"]
+            if name in self._xlsx_buffers:
+                return
+            self._xlsx_buffers[name] = {
+                "raw": [list(r) for r in payload["rows"]],
+                "formulas": dict(payload["formulas"]),
+                "cached": dict(payload["cached"]),
+                "orig": [list(r) for r in payload["rows"]],
+            }
+            return
+        if "sheet" in payload:
+            name = payload["sheet"]
+            if payload.get("error"):
+                self._grid_error = payload["error"]
+                self.lbl_info.setText(tr("ошибка чтения: {err}").format(err=payload["error"]))
+                return
+            self._xlsx_buffers[name] = {
+                "raw": [list(r) for r in payload["rows"]],
+                "formulas": dict(payload["formulas"]),
+                "cached": dict(payload["cached"]),
+                "orig": [list(r) for r in payload["rows"]],
+            }
+            if self._grid_current_name == name:
+                self._apply_xlsx_buffer(name)
+            return
         self.sheet_model.append_rows(payload.get("rows", []))
         if payload.get("done"):
             if payload.get("error"):
@@ -1154,6 +1696,17 @@ class FileViewerDialog(QDialog):
         self.btn_preview.setText(tr("Исходник") if on else tr("Предпросмотр"))
         if not force:
             self.btn_preview.setChecked(on)
+
+    def _render_live_md(self) -> None:
+        """Живой рендер markdown (таблиц в том числе) рядом с исходником."""
+        if self.kind != "md" or self.md_live.isHidden():
+            return
+        bar = self.text_edit.verticalScrollBar()
+        frac = bar.value() / max(1, bar.maximum())
+        self.md_live.document().setMarkdown(self.text_edit.toPlainText())
+        self._style_markdown_tables(self.md_live.document())
+        lbar = self.md_live.verticalScrollBar()
+        lbar.setValue(round(frac * max(0, lbar.maximum())))
 
     def _toggle_preview(self, on: bool) -> None:
         self._set_preview(on)
@@ -1323,6 +1876,60 @@ class FileViewerDialog(QDialog):
         self.index = (self.index + delta) % len(self.files)
         self.load_current()
 
+    def _save_xlsx(self) -> None:
+        """Сохранить книгу: правленые листы + пересчёт формул всех листов
+        с вписыванием кэшированных значений (openpyxl их не пишет)."""
+        from sphaera_commander import formulas as fm
+
+        path = self.files[self.index]
+        self._sync_current_sheet_buffer()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            names = pv.xlsx_sheet_names(path)
+            for name in names:  # не загруженные листы — для кэшей и ссылок
+                if name not in self._xlsx_buffers:
+                    rows, formulas, cached = pv.xlsx_sheet_raw(path, name)
+                    self._xlsx_buffers[name] = {
+                        "raw": rows, "formulas": formulas, "cached": cached,
+                        "orig": [list(r) for r in rows]}
+            edited = {name: self._xlsx_buffers[name]["raw"]
+                      for name in self._xlsx_dirty
+                      if name in self._xlsx_buffers}
+            originals = {name: self._xlsx_buffers[name]["orig"]
+                         for name in edited}
+            all_values: dict[str, dict] = {}
+            failed_total = 0
+            ctx = fm.Context({name: [] for name in names})
+            for _round in range(2):  # два прохода: сходимость кросс-ссылок
+                all_values.clear()
+                for name in names:
+                    buf = self._xlsx_buffers[name]
+                    vals, _n, failed, unstable = fm.evaluate_sheet(
+                        buf["raw"], ctx, name, seed=buf["cached"])
+                    for coord in list(failed) + list(unstable):
+                        if coord in buf["cached"]:
+                            vals[coord] = buf["cached"][coord]
+                    all_values[name] = vals
+                    failed_total = len(failed) + len(unstable)
+            if edited:
+                pv.xlsx_save_cells(path, edited, originals)
+            pv.xlsx_inject_cached(path, all_values)
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, tr("Ошибка"),
+                                 tr("Не удалось сохранить xlsx:\n{exc}").format(exc=exc))
+            return
+        QApplication.restoreOverrideCursor()
+        for name in self._xlsx_dirty:
+            buf = self._xlsx_buffers.get(name)
+            if buf is not None:
+                buf["orig"] = [list(r) for r in buf["raw"]]
+        self._xlsx_dirty.clear()
+        self.sheet_model.dirty = False
+        note = (tr(" • без пересчёта: {n}").format(n=failed_total)
+                if failed_total else "")
+        self.lbl_info.setText(tr("сохранено (xlsx{note})").format(note=note))
+
     def _save(self) -> None:
         if not self.editable or self.text_edit.isReadOnly():
             return
@@ -1330,6 +1937,9 @@ class FileViewerDialog(QDialog):
             return
         path = self.files[self.index]
         text = self.text_edit.toPlainText()
+        if self.kind == "xlsx":
+            self._save_xlsx()
+            return
         if self.kind == "xls":
             ret = QMessageBox.question(
                 self, tr("Сохранение XLS"),
@@ -1429,6 +2039,18 @@ class FileViewerDialog(QDialog):
             self._render_markdown(text)
 
     def reject(self) -> None:
+        if self.kind == "xlsx" and self._xlsx_dirty:
+            ret = QMessageBox.question(
+                self, tr("Есть изменения"),
+                tr("Таблица изменена. Сохранить xlsx (формулы сохраняются)?"),
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Cancel)
+            if ret == QMessageBox.Cancel:
+                return
+            if ret == QMessageBox.Yes:
+                self._save()
+                if self._xlsx_dirty:
+                    return
         grid_dirty = self.kind == "xls" and self.sheet_model.dirty
         if grid_dirty:
             ret = QMessageBox.question(

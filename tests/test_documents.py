@@ -202,6 +202,58 @@ class PdfTests(ViewerBase):
         dlg._pdf_rotate(90)  # выполняется без ошибок
         dlg.reject()
 
+    def test_annotations_roundtrip(self):
+        pv.pdf_add_annotation(self.pdf, 0, "highlight", (20, 100, 300, 120))
+        pv.pdf_add_annotation(self.pdf, 0, "text", (200, 700, 230, 730),
+                              "Заметка")
+        pv.pdf_add_annotation(self.pdf, 0, "freetext", (20, 20, 200, 50),
+                              "Смотреть тут")
+        annots = pv.pdf_annot_list(self.pdf)
+        self.assertEqual(len(annots), 3)
+        kinds = sorted(a["subtype"] for a in annots)
+        self.assertEqual(kinds, ["FreeText", "Highlight", "Text"])
+        self.assertIn("Заметка", [a["contents"] for a in annots])
+        # страница и текст не пострадали
+        self.assertEqual(pv.pdf_page_count(self.pdf), 1)
+        self.assertIn("First line", pv.pdf_page_text(self.pdf, 0))
+        # рендер с аннотациями отличается от чистого (pdfium рисует)
+        clean = pv.pdf_render(self.pdf, 0, 1.0, draw_annots=False)[0]
+        drawn = pv.pdf_render(self.pdf, 0, 1.0, draw_annots=True)[0]
+        self.assertNotEqual(clean, drawn)
+
+    def test_annotation_delete(self):
+        pv.pdf_add_annotation(self.pdf, 0, "highlight", (20, 100, 300, 120))
+        pv.pdf_add_annotation(self.pdf, 0, "text", (200, 700, 230, 730), "N")
+        pv.pdf_delete_annotation(self.pdf, 0, 0)
+        annots = pv.pdf_annot_list(self.pdf)
+        self.assertEqual(len(annots), 1)
+        self.assertEqual(annots[0]["subtype"], "Text")
+
+    def test_annotation_viewer_bar_and_list(self):
+        from sphaera_commander.viewer import AnnotListModel, FileViewerDialog
+
+        pv.pdf_add_annotation(self.pdf, 0, "highlight", (20, 100, 300, 120))
+        dlg = FileViewerDialog(None, [self.pdf], 0, editable=True)
+        self.assertFalse(dlg.annot_bar_widget.isHidden())
+        dlg.btn_annot_highlight.setChecked(True)
+        self.assertEqual(dlg.pdf_label.annot_mode, "highlight")
+        dlg.btn_annot_note.setChecked(True)
+        self.assertEqual(dlg.pdf_label.annot_mode, "text")
+        self.assertFalse(dlg.btn_annot_highlight.isChecked())  # радио-режим
+        dlg.reject()
+        dlg = FileViewerDialog(None, [self.pdf], 0, editable=False)
+        self.assertTrue(dlg.annot_bar_widget.isHidden())  # в просмотре нет
+        dlg.reject()
+        model = AnnotListModel(self.pdf)
+        self.assertEqual(model.rowCount(), 1)
+        self.assertEqual(model.data(model.index(0, 0)), "1")
+        self.assertEqual(model.data(model.index(0, 1)), "Highlight")
+
+    def test_page_size(self):
+        w, h = pv.pdf_page_size(self.pdf, 0)
+        self.assertAlmostEqual(w, 400, delta=1)
+        self.assertAlmostEqual(h, 200, delta=1)
+
 
 class DocxTests(ViewerBase):
     def test_paragraph_roundtrip(self):
@@ -283,6 +335,77 @@ class SheetTests(ViewerBase):
         SheetTests._wait_grid(dlg)
         self.assertEqual(dlg.sheet_model.index(0, 1).data(), "b")
         self.assertIn(";", dlg.lbl_info.text())
+        dlg.reject()
+
+    def test_xlsx_edit_recalc_and_save(self):
+        """Правка сетки xlsx: живой пересчёт формул, fx-режим, сохранение
+        с формулами и вписанными кэшированными значениями."""
+        from openpyxl import load_workbook
+
+        from sphaera_commander.viewer import FileViewerDialog
+
+        path = os.path.join(self.tmp, "formulas.xlsx")
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Данные"
+        ws["A1"], ws["A2"], ws["A3"] = 10, 20, 30
+        ws["B1"] = "=SUM(A1:A3)"
+        ws["B2"] = '=IF(A1>5,"много","мало")'
+        ws2 = wb.create_sheet("Итог")
+        ws2["A1"] = "=Данные!B1*2"
+        wb.save(path)
+
+        dlg = FileViewerDialog(None, [path], 0, editable=True)
+        self.assertEqual(dlg.kind, "xlsx")
+        SheetTests._wait_grid(dlg)
+        model = dlg.sheet_model
+        self.assertTrue(model.editable)
+        self.assertFalse(dlg.btn_grid_raw.isHidden())
+        # начальный показ: кэшей нет (файл создан openpyxl) — сырье формул
+        self.assertEqual(model.index(0, 1).data(), "=SUM(A1:A3)")
+        # правка A1 → живой пересчёт B1/B2
+        model.setData(model.index(0, 0), "100")
+        self.assertEqual(model.index(0, 1).data(), "150")
+        self.assertEqual(model.index(1, 1).data(), "много")
+        self.assertIn("Данные", dlg._xlsx_dirty)
+        # fx: показать формулы
+        dlg.btn_grid_raw.setChecked(True)
+        self.assertEqual(model.index(0, 1).data(), "=SUM(A1:A3)")
+        dlg.btn_grid_raw.setChecked(False)
+        # сохранение: формулы сохраняются, кэши вписываются, Итог пересчитан
+        dlg._save()
+        self.assertEqual(dlg._xlsx_dirty, set())
+        wb2 = load_workbook(path)
+        self.assertEqual(wb2["Данные"]["B1"].value, "=SUM(A1:A3)")
+        wb3 = load_workbook(path, data_only=True)
+        self.assertEqual(wb3["Данные"]["B1"].value, 150)
+        self.assertEqual(wb3["Данные"]["B2"].value, "много")
+        self.assertEqual(wb3["Итог"]["A1"].value, 300)
+        dlg.reject()
+
+    def test_xlsx_unedited_cell_keeps_type(self):
+        """Неизменённые ячейки не переписываются: числовой тип сохраняется."""
+        from openpyxl import Workbook, load_workbook
+
+        from sphaera_commander.viewer import FileViewerDialog
+
+        path = os.path.join(self.tmp, "typed.xlsx")
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Лист"
+        ws["A1"], ws["A2"] = 5, 7
+        ws["B1"] = "=A1+A2"
+        wb.save(path)
+        dlg = FileViewerDialog(None, [path], 0, editable=True)
+        SheetTests._wait_grid(dlg)
+        dlg.sheet_model.setData(dlg.sheet_model.index(0, 0), "1")
+        dlg._save()
+        wb3 = load_workbook(path, data_only=True)
+        self.assertEqual(wb3["Лист"]["A1"].value, 1)  # правленая — записана
+        self.assertEqual(wb3["Лист"]["A2"].value, 7)  # нетронутая — тип жив
+        self.assertEqual(wb3["Лист"]["B1"].value, 8)
         dlg.reject()
 
 

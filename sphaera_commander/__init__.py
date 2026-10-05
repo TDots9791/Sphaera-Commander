@@ -1,3 +1,3 @@
 """Sphaera Commander — двухпанельный файловый менеджер в духе Total Commander."""
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"

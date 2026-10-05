@@ -208,7 +208,6 @@ _T = {
     "Маски через пробел или ;:  *.py  *.txt;README*":
         ("Patterns separated by spaces or ;:  *.py  *.txt;README*",
          "掩码用空格或 ; 分隔：*.py  *.txt;README*"),
-    "Миниатюры картинок": ("Image thumbnails", "图片缩略图"),
     "Монтирование": ("Mounting", "挂载"),
     "Найти": ("Find", "查找"),
     "Начало:": ("Start:", "起始："),
@@ -352,8 +351,6 @@ _T = {
     "Файл назначения уже существует. Заменить его?":
         ("The destination file already exists. Replace it?", "目标文件已存在。是否替换？"),
     "Файл существует": ("File exists", "文件已存在"),
-    "Фирменная тёмная тема": ("Brand dark theme", "品牌深色主题"),
-    "Фирменная тёмная тема: ": ("Brand dark theme: ", "品牌深色主题："),
     "Формат:": ("Format:", "格式："),
     "Форматировать": ("Format", "格式化"),
     "Форматировать JSON (Ctrl+Shift+F)": ("Format JSON (Ctrl+Shift+F)", "格式化 JSON（Ctrl+Shift+F）"),
@@ -380,10 +377,8 @@ _T = {
     "в презентации нет слайдов": ("no slides in the presentation", "演示文稿中没有幻灯片"),
     "в файле нет страниц": ("the file has no pages", "文件没有页面"),
     "версия {v}": ("version {v}", "版本 {v}"),
-    "включена": ("enabled", "已开启"),
     "внутренняя ошибка: {exc}": ("internal error: {exc}", "内部错误：{exc}"),
     "вхождений: {n}": ("hits: {n}", "匹配次数：{n}"),
-    "выключена (системная)": ("disabled (system theme)", "已关闭（系统主题）"),
     "дерева нет — ошибка: {exc}": ("no tree — error: {exc}", "无树视图 — 错误：{exc}"),
     "дерево недоступно: {exc}": ("tree unavailable: {exc}", "树视图不可用：{exc}"),
     "дубликат нового имени: {new!r} ({first!r} и {name!r})":
@@ -669,6 +664,51 @@ _T = {
     "Размер": ("Size", "大小"),
     "Изменён": ("Modified", "修改时间"),
     "Права": ("Perms", "权限"),
+    " • без пересчёта: {n}":
+        (" • not recalculated: {n}", " • 未能重算：{n}"),
+    "Аннотации": ("Annotations", "批注"),
+    "Аннотации PDF": ("PDF annotations", "PDF 批注"),
+    "Аннотации:": ("Annotations:", "批注："),
+    "Аннотации…": ("Annotations…", "批注…"),
+    "Выделение": ("Highlight", "高亮"),
+    "Выделить фрагмент: обведите его мышью":
+        ("Highlight a fragment: drag a rectangle over it",
+         "高亮片段：用鼠标框选"),
+    "Добавить видимый текст: обведите область":
+        ("Add visible text: drag a rectangle for it",
+         "添加可见文字：框选区域"),
+    "Заметка": ("Note", "便签"),
+    "Миниатюры (картинки и PDF)":
+        ("Thumbnails (images and PDF)", "缩略图（图片和 PDF）"),
+    "Не удалось добавить: {exc}": ("Could not add: {exc}", "无法添加：{exc}"),
+    "Не удалось сохранить xlsx:\n{exc}":
+        ("Could not save the xlsx:\n{exc}", "无法保存 xlsx：\n{exc}"),
+    "Не удалось удалить: {exc}": ("Could not delete: {exc}", "无法删除：{exc}"),
+    "Перенос (перетащено): {n}": ("Move (dropped): {n}", "移动（拖放）：{n}"),
+    "Показывать формулы вместо значений":
+        ("Show formulas instead of values", "显示公式而非数值"),
+    "Прикрепить заметку: клик по странице":
+        ("Attach a note: click on the page", "添加便签：在页面上点击"),
+    "Размеры каталогов": ("Directory sizes", "目录大小"),
+    "Размеры каталогов: ": ("Directory sizes: ", "目录大小："),
+    "Светлая тема (пергамент)": ("Light theme (parchment)", "浅色主题（羊皮纸）"),
+    "Системная тема": ("System theme", "系统主题"),
+    "Страница": ("Page", "页"),
+    "Таблица изменена. Сохранить xlsx (формулы сохраняются)?":
+        ("The sheet was modified. Save the xlsx (formulas are kept)?",
+         "表格已修改。保存 xlsx（保留公式）？"),
+    "Текст заметки:": ("Note text:", "便签内容："),
+    "Текст на странице": ("Text on page", "页面文字"),
+    "Тема": ("Theme", "主题"),
+    "Тема: {name}": ("Theme: {name}", "主题：{name}"),
+    "Тип": ("Type", "类型"),
+    "Тёмная тема (Iustitia)": ("Dark theme (Iustitia)", "深色主题（Iustitia）"),
+    "Удалить выбранные": ("Delete selected", "删除所选"),
+    "включены": ("on", "开"),
+    "выключены": ("off", "关"),
+    "сохранено (xlsx{note})": ("saved (xlsx{note})", "已保存（xlsx{note}）"),
+    "строк: {n} • формул: {f}":
+        ("rows: {n} • formulas: {f}", "行：{n} • 公式：{f}"),
 }
 
 

@@ -177,6 +177,7 @@ class FileTableModel(QAbstractTableModel):
         self.thumbnails_on = False
         self._thumb_store = None
         self._icons: dict[str, QIcon] = {}
+        self.dir_sizes: dict[str, int] = {}  # путь → байт (фоновый подсчёт)
 
     def set_thumbnails(self, on: bool, store=None) -> None:
         self.thumbnails_on = on
@@ -202,7 +203,19 @@ class FileTableModel(QAbstractTableModel):
         self.beginResetModel()
         self.path = path
         self.entries = entries
+        self.dir_sizes = {p: s for p, s in self.dir_sizes.items()
+                          if any(e.path == p for e in entries)}
         self.endResetModel()
+
+    def set_dir_size(self, path: str, size: int) -> bool:
+        """Запомнить вычисленный размер каталога; True — строка в списке."""
+        self.dir_sizes[path] = size
+        for i, e in enumerate(self.entries):
+            if e.path == path:
+                self.dataChanged.emit(self.index(i + 1, SIZE_COL),
+                                      self.index(i + 1, SIZE_COL))
+                return True
+        return False
 
     def reload(self, path: str | None = None) -> None:
         if path is not None:
@@ -341,14 +354,19 @@ class FileTableModel(QAbstractTableModel):
             if col == EXT_COL:
                 return ext_of(e)
             if col == SIZE_COL:
-                return tr(DIR_SIZE_TEXT) if e.is_dir else human_size(e.size)
+                if e.is_dir:
+                    size = self.dir_sizes.get(e.path)
+                    return human_size(size) if size is not None \
+                        else tr(DIR_SIZE_TEXT)
+                return human_size(e.size)
             if col == MTIME_COL:
                 return time.strftime("%d.%m.%Y %H:%M", time.localtime(e.mtime))
             if col == MODE_COL:
                 return mode_string(e.mode)
         if role == Qt.DecorationRole and col == NAME_COL:
             if (self.thumbnails_on and self._thumb_store is not None
-                    and not e.is_dir and thumbnails.is_image(e.path)):
+                    and not e.is_dir
+                    and thumbnails.is_thumbable(e.path)):
                 icon = self._thumb_store.get(e.path, e.mtime, e.size)
                 if icon is not None and not icon.isNull():
                     return icon
