@@ -359,6 +359,36 @@ def _make_min_pdf(path: str, word: str) -> None:
         dlg.reject()
 
 
+    def test_quick_view_archive_members(self):
+        """Ctrl+Q показывает членов архива (zip/rar) — извлечение в кэш."""
+        import subprocess as _sp
+        import time as _time
+
+        from sphaera_commander.fsmodel import FileEntry
+        from sphaera_commander.quick_preview import QuickPreview
+
+        if not shutil.which("zip"):
+            self.skipTest("zip не установлен")
+        tmp = tempfile.mkdtemp(prefix="sc_qv_vfs_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        with open(os.path.join(tmp, "readme.md"), "w",
+                  encoding="utf-8") as f:
+            f.write("# Заголовок\n\nпривет")
+        z = os.path.join(tmp, "book.zip")
+        _sp.run(["zip", "-j", "-q", z, os.path.join(tmp, "readme.md")],
+                check=True)
+        qp = QuickPreview()
+        try:
+            qp.show_entry(FileEntry(name="readme.md", path=f"{z}::readme.md",
+                                    is_dir=False, is_link=False, size=22,
+                                    mtime=0.0, mode=0o100644))
+            qp._debounce.stop()
+            qp._load_pending()
+            self.assertIn("привет", qp._browser.toPlainText())
+        finally:
+            qp.deleteLater()
+
+
 class QuickViewPdfTests(unittest.TestCase):
     """Ctrl+Q на PDF: листание страниц, клики по краям, масштаб."""
 

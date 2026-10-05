@@ -36,6 +36,34 @@ from .textutil import text_preview
 from .viewer import looks_binary
 
 PREVIEW_TEXT_LIMIT = 1 * 1024 * 1024
+MEMBER_CACHE_LIMIT = 100  # извлечённых членов архива в кэше предпросмотра
+
+_member_cache_dir: str | None = None
+
+
+def _member_temp_dir() -> str:
+    """Каталог кэша извлечённых членов архива (переполнился — очищается)."""
+    global _member_cache_dir
+    import tempfile as _tempfile
+
+    if _member_cache_dir is None or not os.path.isdir(_member_cache_dir):
+        _member_cache_dir = _tempfile.mkdtemp(prefix="sphaera-preview-vfs-")
+    return _member_cache_dir
+
+
+def _prune_member_cache() -> None:
+    """Больше лимита — вымести весь кэш (члены извлекаются заново по мере
+    надобности; извлечение дешевле роста кэша без границ)."""
+    if _member_cache_dir is None or not os.path.isdir(_member_cache_dir):
+        return
+    try:
+        if len(os.listdir(_member_cache_dir)) > MEMBER_CACHE_LIMIT:
+            import shutil as _shutil
+
+            _shutil.rmtree(_member_cache_dir, ignore_errors=True)
+            globals()["_member_cache_dir"] = None
+    except OSError:
+        pass
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico")
 PDF_SCALE_MIN, PDF_SCALE_MAX = 0.25, 6.0
 
@@ -237,6 +265,25 @@ class QuickPreview(QWidget):
             self._doc_nav.hide()
             self._page(tr("Каталог.\n(Enter — перейти, F3 — открыть файл)"))
             self._info.setText("")
+            return
+        if "::" in entry.path:
+            # член архива: извлечь во временный файл и показать как обычный
+            archive, _, member = entry.path.partition("::")
+            _prune_member_cache()
+            try:
+                from .archives import ArchiveBrowser
+
+                browser = ArchiveBrowser(archive)
+                temp_path = browser.extract_member_to_temp(
+                    member, _member_temp_dir())
+            except Exception as exc:
+                self._page(tr("Не удалось показать:\n{exc}").format(exc=exc))
+                self._info.setText("")
+                return
+            self._load(FileEntry(name=entry.name, path=temp_path,
+                                 is_dir=False, is_link=False,
+                                 size=entry.size, mtime=entry.mtime,
+                                 mode=entry.mode))
             return
         path = entry.path
         ext = os.path.splitext(path)[1].lower()
