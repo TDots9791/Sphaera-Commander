@@ -662,6 +662,72 @@ class LinkTests(unittest.TestCase):
             win.close()
 
 
+class SelectAllKeysTests(unittest.TestCase):
+    """Ctrl+A — отметить файлы; двойное Ctrl+A — добавить каталоги."""
+
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self.tmp = tempfile.mkdtemp(prefix="sc_ctla_")
+        for i in range(4):
+            with open(os.path.join(self.tmp, f"f{i}.txt"), "w") as fh:
+                fh.write("x")
+        for d in ("dir1", "dir2"):
+            os.makedirs(os.path.join(self.tmp, d))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_ctrl_a_marks_files_only_then_dirs(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        from sphaera_commander.panel import FilePanel
+
+        panel = FilePanel()
+        try:
+            panel.cd(self.tmp)
+            panel.wait_loaded()
+            view = panel.view
+            QTest.keyClick(view, Qt.Key_A, Qt.ControlModifier)
+            self.assertEqual(set(panel.model.marked),
+                             {f"f{i}.txt" for i in range(4)})
+            QTest.keyClick(view, Qt.Key_A, Qt.ControlModifier)
+            self.assertIn("dir1", panel.model.marked)
+            self.assertIn("dir2", panel.model.marked)
+            self.assertEqual(len(panel.model.marked), 6)
+            # медленный повторный Ctrl+A — не сбрасывает и не добавляет
+            QTest.keyClick(view, Qt.Key_A, Qt.ControlModifier)
+            self.assertEqual(len(panel.model.marked), 6)
+        finally:
+            panel.set_dirsizes(False)
+            panel.deleteLater()
+            QApplication.processEvents()
+
+    def test_slow_second_ctrl_a_files_only(self):
+        """Ctrl+A позже двойного интервала — снова только файлы (уже
+        отмеченные остаются, ничего нового не происходит для каталогов)."""
+        import time as _time
+
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+
+        from sphaera_commander.panel import FilePanel
+
+        panel = FilePanel()
+        try:
+            panel.cd(self.tmp)
+            panel.wait_loaded()
+            QTest.keyClick(panel.view, Qt.Key_A, Qt.ControlModifier)
+            _time.sleep(QApplication.doubleClickInterval() / 1000.0 + 0.3)
+            QTest.keyClick(panel.view, Qt.Key_A, Qt.ControlModifier)
+            self.assertEqual(set(panel.model.marked),
+                             {f"f{i}.txt" for i in range(4)})
+        finally:
+            panel.set_dirsizes(False)
+            panel.deleteLater()
+            QApplication.processEvents()
+
+
 class MountsTests(unittest.TestCase):
     FIXTURE = {
         "blockdevices": [

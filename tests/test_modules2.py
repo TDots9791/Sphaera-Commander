@@ -202,6 +202,41 @@ class TempPanelTests(unittest.TestCase):
         finally:
             w.close()
 
+    def test_copy_paths_button(self):
+        """Кнопка «Скопировать пути» — вся коллекция в буфер обмена."""
+        from PySide6.QtWidgets import QPushButton
+
+        from sphaera_commander.plugins import temppanel
+
+        w = app_mod.MainWindow()
+        try:
+            w.show()
+            self.app.processEvents()
+            tmp = tempfile.mkdtemp(prefix="sc_tp_paths_")
+            self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+            paths = []
+            for name in ("один.txt", "два.txt"):
+                p = os.path.join(tmp, name)
+                with open(p, "w") as f:
+                    f.write(name)
+                paths.append(p)
+            w.left.cd(tmp)
+            w.left.wait_loaded()
+            w.left.model.set_mark("один.txt", True)
+            w.left.model.set_mark("два.txt", True)
+            plugin = next(p for p in w._plugins if p.id == "temppanel")
+            plugin._add()
+            dlg = temppanel.TempPanelDialog(w, plugin)
+            btn = next(b for b in dlg.findChildren(QPushButton)
+                       if b.text() == "Скопировать пути")
+            btn.click()
+            clip = self.app.clipboard().text().splitlines()
+            self.assertEqual(sorted(clip), sorted(paths))
+            self.assertIn("Скопировано путей: 2", dlg.status.text())
+            dlg.close()
+        finally:
+            w.close()
+
 
 class BranchViewTests(unittest.TestCase):
     @classmethod

@@ -437,15 +437,17 @@ class FileTableModel(QAbstractTableModel):
         self.marked = {n for n in names if n not in self.marked}
         self.dataChanged.emit(self.index(1, 0), self.index(len(self.entries), len(COLUMNS) - 1))
 
-    def mark_mask(self, pattern: str, on: bool) -> int:
+    def mark_mask(self, pattern: str, on: bool,
+                  include_dirs: bool = False) -> int:
         """Массовая отметка по маске: один проход + одно обновление
-        диапазона (на 10 тыс. файлов — в ~100 раз быстрее поштучной)."""
+        диапазона (на 10 тыс. файлов — в ~100 раз быстрее поштучной);
+        include_dirs — отметить и каталоги (второе Ctrl+A)."""
         import fnmatch
 
         count = 0
         first = last = None
         for i, e in enumerate(self.entries):
-            if e.is_dir:
+            if e.is_dir and not include_dirs:
                 continue
             if fnmatch.fnmatch(e.name.lower(), pattern.lower()):
                 if on:

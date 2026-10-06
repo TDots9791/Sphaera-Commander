@@ -45,6 +45,7 @@ from .i18n import tr, unit
 
 class FileView(QTableView):
     """Таблица с TC-поведением клавиш: Tab, Enter, Insert, +, -, *;
+    Ctrl+A — отметить файлы, двойное Ctrl+A — добавить каталоги;
     перетаскивание файлов из панели и приём drop'ов."""
 
     switch_requested = Signal()
@@ -69,6 +70,7 @@ class FileView(QTableView):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setDefaultDropAction(Qt.CopyAction)
+        self._last_select_all = 0.0  # для двойного Ctrl+A
         self.verticalHeader().hide()
         self.verticalHeader().setDefaultSectionSize(22)
         # колонки всегда подгоняются под ширину панели; не влезающие имена
@@ -188,6 +190,20 @@ class FileView(QTableView):
             # TC: Del — в корзину, Shift+Del — безвозвратно
             self.delete_requested.emit(
                 bool(event.modifiers() & Qt.ShiftModifier))
+            event.accept()
+            return
+        if key == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+            # Ctrl+A — отметить файлы; повторный в пределах двойного клика —
+            # добавить к ним каталоги (двойное Ctrl+A)
+            import time as _time
+
+            from PySide6.QtWidgets import QApplication
+
+            now = _time.monotonic()
+            include_dirs = (now - self._last_select_all) \
+                <= QApplication.doubleClickInterval() / 1000.0
+            self._last_select_all = now
+            model.mark_mask("*", True, include_dirs=include_dirs)
             event.accept()
             return
         if key == Qt.Key_Plus:

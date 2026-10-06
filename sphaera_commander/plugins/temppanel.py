@@ -1,6 +1,7 @@
 """Модуль «Временная панель» (Temp panel / эскорт-список): собрать файлы
 из разных каталогов в одну коллекцию и разом скопировать/перенести в
-нужное место. Отмечайте файлы (Insert/Ctrl+клик) и жмите
+нужное место; «Скопировать пути» — вся коллекция в буфер обмена.
+Отмечайте файлы (Insert/Ctrl+клик) и жмите
 «Добавить во временную панель» — собранное живёт до выхода."""
 
 from __future__ import annotations
@@ -50,13 +51,17 @@ class TempPanelDialog(QDialog):
         btn_copy.clicked.connect(lambda: self._transfer(move=False))
         btn_move = QPushButton(tr("Перенести в другую панель"))
         btn_move.clicked.connect(lambda: self._transfer(move=True))
+        btn_paths = QPushButton(tr("Скопировать пути"))
+        btn_paths.setToolTip(
+            tr("Все пути собранного — в буфер обмена (по одному в строке)"))
+        btn_paths.clicked.connect(self._copy_paths)
         btn_remove = QPushButton(tr("Убрать из списка"))
         btn_remove.clicked.connect(self._remove_selected)
         btn_clear = QPushButton(tr("Очистить"))
         btn_clear.clicked.connect(self._clear)
         close = QPushButton(tr("Закрыть"))
         close.clicked.connect(self.close)
-        for w in (btn_copy, btn_move, btn_remove, btn_clear):
+        for w in (btn_copy, btn_move, btn_paths, btn_remove, btn_clear):
             row.addWidget(w)
         row.addStretch(1)
         row.addWidget(close)
@@ -66,6 +71,14 @@ class TempPanelDialog(QDialog):
         layout.addWidget(self.status)
         layout.addLayout(row)
         self.reload()
+
+    def _copy_paths(self) -> None:
+        """Все пути коллекции в буфер обмена — по одному в строке."""
+        from PySide6.QtWidgets import QApplication
+
+        paths = [e.path for e in self.plugin.entries]
+        QApplication.clipboard().setText("\n".join(paths))
+        self.status.setText(tr("Скопировано путей: {n}").format(n=len(paths)))
 
     # -- отображение ---------------------------------------------------------
 
