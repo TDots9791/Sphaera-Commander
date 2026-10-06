@@ -202,6 +202,45 @@ class TempPanelTests(unittest.TestCase):
         finally:
             w.close()
 
+    def test_dialog_updates_live_on_add(self):
+        """Добавление в коллекцию при открытом окне — сразу видно, без
+        перезапуска окна; повторный вызов поднимает то же окно."""
+        from sphaera_commander.plugins import temppanel
+
+        w = app_mod.MainWindow()
+        try:
+            w.show()
+            self.app.processEvents()
+            tmp = tempfile.mkdtemp(prefix="sc_tpl_")
+            self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+            for i in range(2):
+                with open(os.path.join(tmp, f"ф{i}.txt"), "w") as f:
+                    f.write("x")
+            w.left.cd(tmp)
+            w.left.wait_loaded()
+            plugin = next(p for p in w._plugins if p.id == "temppanel")
+            plugin._show()
+            dlg = plugin._dialog
+            self.assertIsNotNone(dlg)
+            self.assertTrue(dlg.isVisible())
+            self.assertEqual(dlg.table.rowCount(), 0)
+            w.left.model.set_mark("ф0.txt", True)
+            plugin._add()
+            self.assertEqual(dlg.table.rowCount(), 1)
+            w.left.model.set_mark("ф1.txt", True)
+            plugin._add()
+            self.assertEqual(dlg.table.rowCount(), 2)
+            self.assertIn("Объектов: 2", dlg.status.text())
+            # повторное открытие — то же окно, не второе
+            plugin._show()
+            self.assertIs(plugin._dialog, dlg)
+            dlg.close()
+            self.app.processEvents()
+            self.assertIsNone(plugin._dialog)
+            plugin._add()  # без открытого окна — не падает
+        finally:
+            w.close()
+
     def test_copy_paths_button(self):
         """Кнопка «Скопировать пути» — вся коллекция в буфер обмена."""
         from PySide6.QtWidgets import QPushButton

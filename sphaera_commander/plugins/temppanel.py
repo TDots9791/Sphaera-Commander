@@ -163,7 +163,7 @@ class TempPanelDialog(QDialog):
                     if not move]
             self.plugin.entries = keep
             self.reload()
-            self.app.refresh_all()
+            self.plugin.app.refresh_all()
 
 
 class Plugin(SphaeraPlugin):
@@ -175,6 +175,7 @@ class Plugin(SphaeraPlugin):
         from sphaera_commander.fsmodel import FileEntry
 
         self.entries: list = []
+        self._dialog = None  # открытое окно коллекции, если есть
 
     def tools_actions(self):
         return [(tr("Временная панель…"), self._show, None)]
@@ -196,16 +197,25 @@ class Plugin(SphaeraPlugin):
             added += 1
         self.app._status(tr("Во временной панели: {n} объект(ов)").format(
             n=len(self.entries)))
+        if added and self._dialog is not None and self._dialog.isVisible():
+            self._dialog.reload()  # живое обновление открытого окна
 
     def _show(self):
-        from PySide6.QtWidgets import QDialog
-
+        if self._dialog is not None and self._dialog.isVisible():
+            self._dialog.raise_()
+            self._dialog.activateWindow()
+            return  # окно уже открыто — поднять, а не плодить второе
         dlg = TempPanelDialog(self.app, self)
         dlg.setModal(False)
+        self._dialog = dlg
+        dlg.finished.connect(self._forget_dialog)
         dlg.show()
         if not hasattr(self.app, "_plugin_dialogs"):
             self.app._plugin_dialogs = []
         self.app._plugin_dialogs.append(dlg)
+
+    def _forget_dialog(self, *_args) -> None:
+        self._dialog = None
 
 
 def create(app):
