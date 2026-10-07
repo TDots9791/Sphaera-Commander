@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 
 from PySide6.QtCore import QProcess
 
@@ -20,6 +21,13 @@ TERMINALS = (
 
 
 def find_terminal() -> tuple[str, tuple[str, ...]] | None:
+    if sys.platform == "win32":
+        # Windows-список — в платформенном слое (ТЗ §4)
+        try:
+            from win64.platform import terminals as platform_terminals
+        except ImportError:
+            return None
+        return platform_terminals.find_terminal()
     for name, args in TERMINALS:
         path = shutil.which(name)
         if path:

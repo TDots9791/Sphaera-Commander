@@ -154,6 +154,11 @@ def make_rename_dialog(parent, entry) -> QInputDialog:
     return dlg
 
 
+# Шелл командной строки окна: win64/run.py инжектирует платформенный
+# shell_argv (ТЗ §4); по умолчанию — /bin/sh -c.
+shell_argv_provider = None
+
+
 class MainWindow(QMainWindow):
     gui_call = Signal(object)  # callable из фонового потока — выполнить в GUI
     def __init__(self):
@@ -1477,7 +1482,9 @@ class MainWindow(QMainWindow):
         self._proc.readyReadStandardError.connect(self._collect_out)
         self._proc.finished.connect(self._cmd_finished)
         self.statusBar().showMessage(f"$ {cmd}")
-        self._proc.start("/bin/sh", ["-c", cmd])
+        argv = (shell_argv_provider(cmd) if shell_argv_provider
+                else ["/bin/sh", "-c", cmd])
+        self._proc.start(argv[0], argv[1:])
 
     def _collect_out(self):
         if self._proc is None:

@@ -57,8 +57,16 @@ def build_command(cmd: str, panel_dir: str, entry_path: str | None) -> str:
     return out.replace("%d", shlex.quote(panel_dir))
 
 
+# Отсоединённый запуск через платформенный слой: win64/run.py инжектирует
+# реализацию (ТЗ §4); по умолчанию — /bin/sh -c, вывод в никуда.
+run_detached_shell = None
+
+
 def run_command(built: str, cwd: str) -> None:
     """Отсоединённый запуск: не тянем потомка за собой, вывод в никуда."""
+    if run_detached_shell is not None:
+        run_detached_shell(built, cwd, detached=True)
+        return
     subprocess.Popen(
         ["/bin/sh", "-c", built], cwd=cwd,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

@@ -474,9 +474,16 @@ def execute(kind: str, plan: Plan | None, sources: list, policy: str,
                              is_cancelled, ask_cb=ask_cb)
 
 
+# Корзина через платформенный слой: win64/run.py инжектирует реализацию
+# до запуска приложения (ТЗ §4); по умолчанию — XDG-корзина через gio.
+trash_via_platform: Callable | None = None
+
+
 def execute_trash(sources: list, progress_cb: Callable[[Progress], None],
                   is_cancelled: Callable[[], bool]) -> OpResult:
     """Переместить объекты в корзину (XDG) через gio trash; только реальные пути."""
+    if trash_via_platform is not None:
+        return trash_via_platform(sources, progress_cb, is_cancelled)
     result = OpResult()
     gio = shutil.which("gio")
     if gio is None:
