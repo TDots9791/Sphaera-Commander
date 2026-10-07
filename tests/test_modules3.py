@@ -96,8 +96,9 @@ class EncryptTests(unittest.TestCase):
             if needle_status and needle_status in dialog.status.text():
                 return
 
-    @unittest.skipUnless(shutil.which("gpg"),
-                         "gpg не установлен на этой машине")
+    @unittest.skipUnless(os.name == "posix" and shutil.which("gpg"),
+                         "gpg-шифрование на Windows — Д-класс (passphrase-fd "
+                         "не гарантируется), живая проверка — Ф3")
     def test_encrypt_decrypt_roundtrip(self):
         dlg = encrypt.CryptoDialog(None, [self.file], decrypt=False)
         dlg.app = self.fake
