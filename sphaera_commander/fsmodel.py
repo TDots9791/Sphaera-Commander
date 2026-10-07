@@ -139,16 +139,23 @@ def entry_details(path: str) -> dict:
     (рекурсивно dir_stats, ошибки доступа пропускаются).
     """
     st = os.lstat(path)
-    import grp
-    import pwd
+    try:
+        import grp
+        import pwd
+    except ImportError:  # Windows: POSIX-учёток нет (ТЗ §3, Д-класс)
+        pwd = grp = None
 
     def _uid_name(uid):
+        if pwd is None:
+            return str(uid)
         try:
             return pwd.getpwuid(uid).pw_name
         except (KeyError, OSError):
             return str(uid)
 
     def _gid_name(gid):
+        if grp is None:
+            return str(gid)
         try:
             return grp.getgrgid(gid).gr_name
         except (KeyError, OSError):
@@ -157,7 +164,9 @@ def entry_details(path: str) -> dict:
     details = {
         "mode": st.st_mode,
         "size": 0 if stat_m.S_ISDIR(st.st_mode) else st.st_size,
-        "blocks": st.st_blocks * 512,
+        # на Windows у os.stat нет st_blocks — место на диске неизвестно
+        # (атрибуты NTFS — Ф3)
+        "blocks": getattr(st, "st_blocks", 0) * 512,
         "atime": st.st_atime,
         "mtime": st.st_mtime,
         "ctime": st.st_ctime,

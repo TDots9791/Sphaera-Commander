@@ -37,7 +37,8 @@ class DriveSwitchTests(unittest.TestCase):
         try:
             w.show()
             self.app.processEvents()
-            self.assertEqual(w.left.drive_button.text(), "💾 /")
+            # метка зависит от корня текущего диска («/» на POSIX, «X:/» на Windows)
+            self.assertTrue(w.left.drive_button.text().startswith("💾 "))
             shortcuts = {a.shortcut().toString()
                          for a in w.findChildren(QAction)}
             self.assertIn("Ctrl+F1", shortcuts)

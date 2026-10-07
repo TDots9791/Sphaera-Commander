@@ -259,6 +259,9 @@ class ButtonBarLogicTests(unittest.TestCase):
             buttonbar.build_command("prog %f", "/d", None),
             "prog ''")
 
+    @unittest.skipUnless(os.name == "posix",
+                         "/bin/sh — дефолт Linux; Windows-путь даёт "
+                         "инъекция run_detached_shell (репо Win64)")
     def test_run_command_executes_detached(self):
         marker = tempfile.mktemp(prefix="sc_bb_marker_")
         self.addCleanup(lambda: os.path.exists(marker)
@@ -446,15 +449,16 @@ class HotlistTests(_GcAfterTest, unittest.TestCase):
         self.assertEqual(hotlist.load_hotlist(), [])
 
     def test_editor_add_delete(self):
-        dlg = HotlistEditor(None, [{"title": "A", "path": "/a"}], "/tmp/текущая")
+        # портабельный cwd: на Windows «/tmp/текущая» нормализуется к диску
+        cwd = os.path.abspath(os.path.join(tempfile.gettempdir(), "текущая"))
+        dlg = HotlistEditor(None, [{"title": "A", "path": "/a"}], cwd)
         self.addCleanup(drain_delete, dlg)
         dlg._add_current()
         titles = [i["path"] for i in dlg.result_items()]
-        self.assertEqual(titles, ["/a", "/tmp/текущая"])
+        self.assertEqual(titles, ["/a", cwd])
         dlg.list.setCurrentRow(0)
         dlg._delete()
-        self.assertEqual([i["path"] for i in dlg.result_items()],
-                         ["/tmp/текущая"])
+        self.assertEqual([i["path"] for i in dlg.result_items()], [cwd])
 
 
 class SevenZipRarTests(unittest.TestCase):

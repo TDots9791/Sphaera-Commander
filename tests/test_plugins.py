@@ -207,6 +207,9 @@ class TerminalTests(unittest.TestCase):
         self.assertIsNotNone(found)
         self.assertEqual(found[0], "/usr/bin/xterm")
 
+    @unittest.skipUnless(os.name == "posix",
+                         "на Windows список терминалов платформенный "
+                         "(покрыт тестами репо Win64)")
     def test_open_in_records_process(self):
         from PySide6.QtCore import QProcess
 

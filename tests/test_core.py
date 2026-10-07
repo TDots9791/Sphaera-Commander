@@ -135,6 +135,7 @@ class CopyTests(BaseFsTest):
         with open(os.path.join(self.dst, "a.txt")) as f:
             self.assertEqual(f.read(), "alpha")
 
+    @unittest.skipUnless(os.name == "posix", "бит исполнения — POSIX")
     def test_copy_preserves_exec_bit(self):
         path = os.path.join(self.src, "run.sh")
         write(path, "#!/bin/sh\n")
@@ -144,6 +145,9 @@ class CopyTests(BaseFsTest):
                           progress_cb=self.noop_progress, is_cancelled=self.not_cancelled)
         self.assertEqual(stat.S_IMODE(os.stat(os.path.join(self.dst, "run.sh")).st_mode), 0o755)
 
+    @unittest.skipUnless(os.name == "posix",
+                         "os.readlink на Windows даёт \\\\?\\-префикс; "
+                         "симлинки — Д-класс ТЗ (живая проверка Ф3)")
     def test_copy_preserves_symlinks(self):
         file_link = os.path.join(self.src, "a_link")
         dir_link = os.path.join(self.src, "sub_link")
@@ -341,6 +345,9 @@ class ModelTests(QtTestCase):
         kinds = [e.is_dir for e in entries]
         self.assertEqual(kinds, sorted(kinds, reverse=True))
 
+    @unittest.skipUnless(os.name == "posix",
+                         "на NTFS st_size симлинка равен 0 — семантика "
+                         "размера различается (Д-класс ТЗ)")
     def test_dir_stats_and_plural(self):
         from sphaera_commander.fsmodel import dir_stats, plural
 

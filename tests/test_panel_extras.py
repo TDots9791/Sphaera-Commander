@@ -474,6 +474,8 @@ class PanelHistoryTests(unittest.TestCase):
             QApplication.processEvents()
 
 
+@unittest.skipUnless(os.name == "posix",
+                     "POSIX-права и pwd/grp; атрибуты NTFS — Ф3 (ТЗ §3)")
 class PropertiesTests(unittest.TestCase):
     def setUp(self):
         self.app = QApplication.instance() or QApplication([])

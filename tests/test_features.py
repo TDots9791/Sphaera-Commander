@@ -422,6 +422,9 @@ if __name__ == "__main__":
     unittest.main()
 
 
+@unittest.skipUnless(os.name == "posix",
+                     "gio-корзина — POSIX; на Windows корзину делает "
+                     "win64.platform.trash (тесты в репо Win64)")
 class TrashTests(unittest.TestCase):
     """F8: удаление в корзину через gio trash."""
 

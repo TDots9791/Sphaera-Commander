@@ -127,6 +127,8 @@ class RemoteAddTests(unittest.TestCase):
         self.assertNotIn("host_key_override", args)  # только для sftp
         self.assertIn("ftp", args)
 
+    @unittest.skipUnless(shutil.which("rclone"),
+                         "rclone не установлен на этой машине")
     def test_obscure_and_create_flow(self):
         app = QApplication.instance() or QApplication([])
         from PySide6.QtCore import QObject, Signal as Sig

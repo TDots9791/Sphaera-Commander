@@ -38,7 +38,11 @@ class CloudMountCoreTests(unittest.TestCase):
         self.assertTrue(cloudmount.is_cloud_path(inside))
         self.assertFalse(cloudmount.is_cloud_path("/home/u/Документы"))
 
-    def test_mount_builds_command_and_marks_ours(self):
+    @unittest.mock.patch.object(cloudmount.shutil, "which",
+                                return_value="/fake/rclone")
+    def test_mount_builds_command_and_marks_ours(self, _mock_which):
+        # путь до rclone подменяется: тест проверяет сборку команды,
+        # а не наличие утилиты (на раннерах её нет)
         calls = []
 
         class FakeProc:
