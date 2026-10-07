@@ -8,3 +8,6 @@ sphaera-commander.spec
 .coverage
 htmlcov/
 .sphaera/
+
+# Внутренняя рабочая тетрадь сессий — только локально, в git не публикуется
+/HANDOFF.md
