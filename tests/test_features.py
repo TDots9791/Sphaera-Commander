@@ -490,7 +490,8 @@ class TrashTests(unittest.TestCase):
         if res.errors and "не поддерживается" in res.errors[0].message:
             self.skipTest("gio запрещает корзину на этом монтировании (tmpfs)")
         self.assertEqual(res.errors, [], res.errors)
-        self.assertEqual(os.listdir(self.src), [])
+        # setUp кладёт ещё и sub/ — он в корзину не входил
+        self.assertNotIn("a.txt", os.listdir(self.src))
         trash_files = os.path.join(self.xdg, "Trash", "files")
         self.assertTrue(os.path.isfile(os.path.join(trash_files, "a.txt")))
         info = os.path.join(self.xdg, "Trash", "info", "a.txt.trashinfo")

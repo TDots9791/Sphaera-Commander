@@ -273,7 +273,9 @@ def _7z_members(archive_path: str) -> list[tuple[str, int, str]]:
     if tool is None:
         raise ValueError("7z (p7zip) не установлен — формат 7z недоступен")
     proc = subprocess.run(
-        [tool, "l", "-ba", "-slt", "--", archive_path],
+        # -sccUTF-8: на Windows 7z печатает имена в консольной кодировке
+        # (OEM), из-за чего кириллические члены не совпадали с ожидаемыми
+        [tool, "l", "-ba", "-slt", "-sccUTF-8", "--", archive_path],
         capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
         raise OSError(proc.stderr.strip() or "7z не смог прочитать архив")

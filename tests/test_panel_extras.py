@@ -584,6 +584,9 @@ class LinkTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
+    @unittest.skipUnless(os.name == "posix",
+                         "симлинки — Д-класс ТЗ (режим разработчика); "
+                         "живая проверка — Ф3")
     def test_symlink_creation(self):
         import unittest.mock
 
