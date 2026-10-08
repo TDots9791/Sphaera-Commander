@@ -200,6 +200,9 @@ class CompareContentTests(unittest.TestCase):
 
 
 class TerminalTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix",
+                         "на Windows find_terminal уходит в платформенный "
+                         "список, мимо мока shutil.which")
     def test_find_with_mock(self):
         with unittest.mock.patch.object(terminal_here.shutil, "which",
                                         return_value="/usr/bin/xterm"):
