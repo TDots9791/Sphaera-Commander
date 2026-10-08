@@ -149,6 +149,7 @@ class CloudDialogTests(unittest.TestCase):
             self.assertEqual(dlg.table.item(0, 2).text(), "Ya.D")
             self.assertEqual(dlg.table.item(1, 2).text(), "rclone")
             self.assertTrue(dlg.btn_gdrive.isHidden())
+            self.assertFalse(dlg.btn_yandex.isHidden())
 
     def test_dialog_shows_gdrive_button_without_remote(self):
         from sphaera_commander.dialogs import CloudSyncDialog
@@ -159,6 +160,32 @@ class CloudDialogTests(unittest.TestCase):
                                         return_value="/usr/bin/rclone"):
             dlg = CloudSyncDialog(None, "/home/u/Проект")
             self.assertFalse(dlg.btn_gdrive.isHidden())
+            self.assertFalse(dlg.btn_yandex.isHidden())
+
+    def test_dialog_hides_yandex_button_when_remote_exists(self):
+        from sphaera_commander.dialogs import CloudSyncDialog
+
+        with unittest.mock.patch.object(cloudsync, "rclone_remotes",
+                                        return_value=["yad:", "yandex:"]), \
+             unittest.mock.patch.object(cloudsync, "rclone_bin",
+                                        return_value="/usr/bin/rclone"):
+            dlg = CloudSyncDialog(None, "/home/u/Проект")
+            self.assertFalse(dlg.btn_gdrive.isHidden())
+            self.assertTrue(dlg.btn_yandex.isHidden())
+
+    def test_connect_remote_yandex_and_gdrive(self):
+        with unittest.mock.patch.object(cloudsync, "rclone_bin",
+                                        return_value="/usr/bin/rclone"):
+            create, reconnect = cloudsync.connect_remote("yandex:", "yandex")
+            self.assertEqual(
+                create,
+                ["/usr/bin/rclone", "config", "create", "yandex", "yandex",
+                 "config_refresh_token", "true"])
+            self.assertEqual(reconnect,
+                             ["/usr/bin/rclone", "config", "reconnect", "yandex:"])
+            create, _reconnect = cloudsync.connect_remote("gdrive")
+            self.assertIn("drive", create)
+            self.assertIn("gdrive", create)
 
     def test_dialog_starts_yad_sync(self):
         from sphaera_commander.dialogs import CloudSyncDialog

@@ -209,12 +209,13 @@ def cancel_sync(holder: dict) -> None:
         proc.terminate()
 
 
-def connect_remote(remote_name: str) -> list[str]:
-    """Команды первичного подключения remote (gdrive:): create + reconnect
-    (второй открывает браузер OAuth)."""
+def connect_remote(remote_name: str, backend: str = "drive") -> list[str]:
+    """Команды первичного подключения remote: create + reconnect
+    (второй открывает браузер OAuth). backend — тип rclone: «drive»
+    (Google), «yandex» (Яндекс.Диск)."""
     rclone = rclone_bin() or "rclone"
     name = remote_name.rstrip(":")
-    return [rclone, "config", "create", name, "drive",
+    return [rclone, "config", "create", name, backend,
             "config_refresh_token", "true"], \
         [rclone, "config", "reconnect", f"{name}:"]
 

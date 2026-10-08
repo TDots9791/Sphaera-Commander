@@ -469,6 +469,18 @@ _T = {
         ("Connecting Google Drive: open the browser and grant access…",
          "正在连接 Google 云端硬盘：请在浏览器中授权…"),
     "Подключить Google Диск": ("Connect Google Drive", "连接 Google 云端硬盘"),
+    "Подключить Яндекс Диск": ("Connect Yandex Disk", "连接 Yandex 磁盘"),
+    "Подключение Яндекс Диска: откройте браузер и разрешите доступ…":
+        ("Connecting Yandex Disk: open the browser and grant access…",
+         "正在连接 Yandex 磁盘：请在浏览器中授权…"),
+    "Яндекс Диск подключён (remote yandex:)":
+        ("Yandex Disk connected (yandex:)", "Yandex 磁盘已连接（yandex:）"),
+    "Не удалось подключить Яндекс Диск (см. rclone config)":
+        ("Failed to connect Yandex Disk (see rclone config)",
+         "无法连接 Yandex 磁盘（见 rclone config）"),
+    "rclone config create yandex yandex, затем вход в браузере":
+        ("rclone config create yandex yandex, then sign in via browser",
+         "rclone config create yandex yandex，然后在浏览器中登录"),
     "Синхронизация с облаком": ("Cloud sync", "云同步"),
     "Синхронизация с облаком…": ("Cloud sync…", "云同步…"),
     "Синхронизация уже идёт — дождитесь завершения":

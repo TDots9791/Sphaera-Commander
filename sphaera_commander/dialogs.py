@@ -533,7 +533,7 @@ class CloudSyncDialog(QDialog):
 
     runLine = Signal(str)     # строка вывода синхронизации (из потока)
     runFinished = Signal(int)  # код возврата (из потока)
-    gdriveFinished = Signal(int)  # итог авторизации Google (из потока)
+    cloudFinished = Signal(str, int)  # (remote, код) итог авторизации облака
 
     def __init__(self, parent, current_dir: str):
         super().__init__(parent)
@@ -582,10 +582,15 @@ class CloudSyncDialog(QDialog):
         self.btn_remove = QPushButton(tr("Убрать пару"))
         self.btn_remove.clicked.connect(self._remove_pair)
         self.btn_gdrive = QPushButton(tr("Подключить Google Диск"))
-        self.btn_gdrive.clicked.connect(self._connect_gdrive)
+        self.btn_gdrive.clicked.connect(
+            lambda: self._connect_cloud("gdrive"))
+        self.btn_yandex = QPushButton(tr("Подключить Яндекс Диск"))
+        self.btn_yandex.clicked.connect(
+            lambda: self._connect_cloud("yandex"))
         btn_close = QPushButton(tr("Закрыть"))
         btn_close.clicked.connect(self.close)
         row.addWidget(self.btn_gdrive)
+        row.addWidget(self.btn_yandex)
         row.addStretch(1)
         row.addWidget(self.btn_remove)
         row.addWidget(self.btn_sync)
@@ -599,7 +604,7 @@ class CloudSyncDialog(QDialog):
 
         self.runLine.connect(self._on_run_line)
         self.runFinished.connect(self._on_run_finished)
-        self.gdriveFinished.connect(self._gdrive_done_ui)
+        self.cloudFinished.connect(self._cloud_done_ui)
         self.reload()
         self._reload_remotes()
 
@@ -633,6 +638,11 @@ class CloudSyncDialog(QDialog):
         elif self.cloudsync.rclone_bin():
             self.btn_gdrive.setToolTip(
                 tr("rclone config create gdrive drive, затем вход в браузере"))
+        if "yandex:" in remotes:
+            self.btn_yandex.hide()
+        elif self.cloudsync.rclone_bin():
+            self.btn_yandex.setToolTip(
+                tr("rclone config create yandex yandex, затем вход в браузере"))
 
     # -- запуск синхронизации ------------------------------------------------
 
@@ -730,11 +740,25 @@ class CloudSyncDialog(QDialog):
             self.remote_path.setText(
                 f"{base}/{name}" if base else name)
 
-    def _connect_gdrive(self) -> None:
-        """Создать gdrive: и открыть браузер OAuth (rclone config reconnect)."""
-        create, reconnect = self.cloudsync.connect_remote("gdrive")
-        self.btn_gdrive.setEnabled(False)
-        self.log.setText(tr("Подключение Google Диска: откройте браузер и разрешите доступ…"))
+    def _cloud_texts(self, remote: str) -> tuple[str, str, str]:
+        """(начало, успех, неудача) для лога — полные ключи i18n."""
+        if remote == "yandex":
+            return (tr("Подключение Яндекс Диска: откройте браузер и разрешите доступ…"),
+                    tr("Яндекс Диск подключён (remote yandex:)"),
+                    tr("Не удалось подключить Яндекс Диск (см. rclone config)"))
+        return (tr("Подключение Google Диска: откройте браузер и разрешите доступ…"),
+                tr("Google Диск подключён (remote gdrive:)"),
+                tr("Не удалось подключить Google Диск (см. rclone config)"))
+
+    def _connect_cloud(self, remote: str) -> None:
+        """Создать remote (gdrive:/yandex:) и открыть браузер OAuth
+        (rclone config reconnect)."""
+        backend = "drive" if remote == "gdrive" else "yandex"
+        create, reconnect = self.cloudsync.connect_remote(remote, backend)
+        button = self.btn_gdrive if remote == "gdrive" else self.btn_yandex
+        start, _ok, _fail = self._cloud_texts(remote)
+        button.setEnabled(False)
+        self.log.setText(start)
 
         def worker():
             import subprocess
@@ -747,17 +771,16 @@ class CloudSyncDialog(QDialog):
                 rc = proc.returncode
             except (OSError, subprocess.TimeoutExpired):
                 rc = -1
-            self.gdriveFinished.emit(rc)
+            self.cloudFinished.emit(remote, rc)
 
-        threading.Thread(target=worker, daemon=True, name="gdrive-auth").start()
+        threading.Thread(target=worker, daemon=True,
+                         name=f"{remote}-auth").start()
 
-    def _gdrive_done_ui(self, rc: int) -> None:
-        self.btn_gdrive.setEnabled(True)
+    def _cloud_done_ui(self, remote: str, rc: int) -> None:
+        (self.btn_gdrive if remote == "gdrive" else self.btn_yandex).setEnabled(True)
         self._reload_remotes()
-        if rc == 0:
-            self.log.setText(tr("Google Диск подключён (remote gdrive:)"))
-        else:
-            self.log.setText(tr("Не удалось подключить Google Диск (см. rclone config)"))
+        _start, ok, fail = self._cloud_texts(remote)
+        self.log.setText(ok if rc == 0 else fail)
 
 
 class PluginsDialog(QDialog):
