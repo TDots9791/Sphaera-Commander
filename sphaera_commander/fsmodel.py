@@ -119,7 +119,12 @@ def dir_stats(path: str) -> DirStats:
                             stack.append(entry.path)
                         else:
                             files += 1
-                            size += entry.stat(follow_symlinks=False).st_size
+                            st_size = entry.stat(follow_symlinks=False).st_size
+                            # на Windows st_size части reparse-объектов
+                            # (junction/облачные заглушки) отрицателен —
+                            # такое слагаемое портит всю сумму
+                            if st_size > 0:
+                                size += st_size
                     except OSError:
                         continue
         except OSError:
