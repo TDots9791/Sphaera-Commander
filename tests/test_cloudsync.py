@@ -1,5 +1,6 @@
 """Тесты облачной синхронизации: пары ya.d/sphaera, команды rclone, диалог."""
 
+import gc
 import json
 import os
 import shutil
@@ -133,6 +134,11 @@ class CloudDialogTests(unittest.TestCase):
         cloudsync.add_pair("/home/u/Проект", "gdrive:p")
 
     def tearDown(self):
+        # Диалоги оставляют циклы «виджет↔родитель»: циклический GC может
+        # собрать их внутри ЧУЖОГО теста и уронить интерпретатор при
+        # уничтожении C++-объектов (сегфолт полного набора на раннерах —
+        # тот же класс, что и в test_modules6._GcAfterTest).
+        gc.collect()
         cloudsync.YAD_CONFIG, cloudsync.SPHAERA_PAIRS_FILE, \
             cloudsync.LISTING_ROOT = self._old
         shutil.rmtree(self.tmp, ignore_errors=True)
