@@ -1592,6 +1592,10 @@ def main(argv=None):
     ns = parser.parse_args(raw)
 
     app = QApplication([sys.argv[0] if argv is None else "sphaera-commander"])
+    # Fusion на всех платформах: айдентика Iustitia одинаковая, а нативный
+    # стиль Windows (windows11/vista) рисует меню с наездом текста пункта
+    # на колонку сочетаний клавиш (замечено на живой машине, Ф3)
+    app.setStyle("Fusion")
     app.setApplicationName("Sphaera Commander")
     app.setOrganizationName("Sphaera")
     app.setDesktopFileName("sphaera-commander")
