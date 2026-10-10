@@ -289,6 +289,11 @@ _T = {
     "Размер": ("Size", "大小"),
     "Размонтирование": ("Unmounting", "卸载"),
     "Размонтировано: {name}": ("Unmounted: {name}", "已卸载：{name}"),
+    "Диск занят — повторяю размонтирование через 2 с…":
+        ("Disk is busy — retrying unmount in 2 s…", "磁盘忙 — 2 秒后重试卸载…"),
+    "{path}:\n{message}\n\nЗакройте приложения, использующие диск; если диск открыт в панели — перейдите на другую папку.":
+        ("{path}:\n{message}\n\nClose the applications using the disk; if a panel is browsing it, switch that panel to another folder.",
+         "{path}：\n{message}\n\n请关闭使用该磁盘的程序；如果某个面板正在浏览该磁盘，请切换到其他文件夹。"),
     "Распаковать…": ("Unpack…", "解压…"),
     "Распаковка {name}": ("Unpacking {name}", "正在解压 {name}"),
     "Рег. выражение": ("Regex", "正则表达式"),

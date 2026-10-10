@@ -692,6 +692,15 @@ class MainWindow(QMainWindow):
             for drive in os.listdrives():
                 _add_root(drive, drive.rstrip("\\/"))
         if mounts.available():
+            # страховка вторая (Ф3: у съёмного тома был только ⏏-пункт):
+            # смонтированные носители в /media открываются, даже если
+            # QStorageInfo их не отдал
+            for dev in mounts.block_devices():
+                mp = dev.get("mountpoint")
+                if (mp and mp != "/" and mp not in seen
+                        and mp.startswith(("/media/", "/run/media/"))):
+                    _add_root(mp, dev.get("label") or dev.get("name") or mp)
+        if mounts.available():
             menu.addSeparator()
             for dev in mounts.block_devices():
                 label = dev["label"] or dev["name"]
@@ -799,11 +808,21 @@ class MainWindow(QMainWindow):
             panel.cd(message)
         panel.refresh()
 
-    def _unmount_device(self, dev: dict, panel: FilePanel) -> None:
+    def _unmount_device(self, dev: dict, panel: FilePanel,
+                        _retry: bool = True) -> None:
         ok, message = mounts.unmount(dev["path"])
+        if not ok and _retry and "busy" in message.lower():
+            # фоновые обходчики панели могли держать диск в момент запроса —
+            # они завершаются за секунды; молча повторяем однократно
+            self._status(tr("Диск занят — повторяю размонтирование через 2 с…"))
+            QTimer.singleShot(2000,
+                              lambda: self._unmount_device(dev, panel, False))
+            return
         if not ok:
-            QMessageBox.warning(self, tr("Размонтирование"),
-                                tr("{path}:\n{message}").format(path=dev["path"], message=message))
+            QMessageBox.warning(
+                self, tr("Размонтирование"),
+                tr("{path}:\n{message}\n\nЗакройте приложения, использующие диск; если диск открыт в панели — перейдите на другую папку.").format(
+                    path=dev["path"], message=message))
             return
         self._status(tr("Размонтировано: {name}").format(name=dev["name"]))
         for p in (self.left, self.right):
