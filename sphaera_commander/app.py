@@ -667,15 +667,30 @@ class MainWindow(QMainWindow):
         menu.addAction(tr("Корень (/)"), lambda: panel.cd("/"))
         menu.addSeparator()
         seen = set()
+
+        def _add_root(root: str, label: str) -> None:
+            # normcase: QStorageInfo на Windows даёт «F:/», listdrives — «F:\»
+            target = os.path.normcase(os.path.abspath(root))
+            if target in seen or not os.path.isdir(target):
+                return
+            seen.add(target)
+            shown = os.path.abspath(root)
+            menu.addAction(f"{label} ({shown})",
+                           lambda r=shown: panel.cd(r))
+
         for vol in QStorageInfo.mountedVolumes():
-            root = vol.rootPath()
-            if not vol.isReady() or root in seen:
+            if not vol.isReady():
                 continue
+            root = vol.rootPath()
             if root.startswith(("/run", "/sys", "/proc", "/dev", "/boot/efi", "/var/lib")):
                 continue
-            seen.add(root)
-            label = vol.displayName() or root
-            menu.addAction(f"{label} ({root})", lambda r=root: panel.cd(r))
+            _add_root(root, vol.displayName() or root)
+        if sys.platform == "win32" and hasattr(os, "listdrives"):
+            # страховка от пропуска съёмных дисков: QStorageInfo.isReady()
+            # бывает ложен у только что подключённых томов, а os.listdrives
+            # видит все буквы напрямую; недоступные отсеет isdir
+            for drive in os.listdrives():
+                _add_root(drive, drive.rstrip("\\/"))
         if mounts.available():
             menu.addSeparator()
             for dev in mounts.block_devices():
