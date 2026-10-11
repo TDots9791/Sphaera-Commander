@@ -486,9 +486,6 @@ _T = {
     "rclone config create yandex yandex, затем вход в браузере":
         ("rclone config create yandex yandex, then sign in via browser",
          "rclone config create yandex yandex，然后在浏览器中登录"),
-    "🔑 Яндекс.Диск: вход через ваше приложение…":
-        ("🔑 Yandex Disk: signing in via your own application…",
-         "🔑 Yandex 磁盘：正在通过您的应用程序登录…"),
     "Ключи приложения не введены": ("Application keys were not entered", "未输入应用程序密钥"),
     "Не удалось получить токен: {err}":
         ("Failed to obtain the token: {err}", "无法获取令牌：{err}"),
