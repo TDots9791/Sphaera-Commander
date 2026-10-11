@@ -90,6 +90,16 @@ def mount(remote: str) -> str:
         proc.stderr.close()
     if not is_mounted(remote):
         raise RuntimeError(err or tr("монтирование не поднялось"))
+    try:
+        # rclone mount поднимается и при мёртвом облаке (Яндекс 10.2026:
+        # 410 на любые resources при живом about) — первый листинг это
+        # вскрывает; тогда размонтируем и честно сообщаем
+        next(os.scandir(path), None)
+    except OSError as exc:
+        unmount(remote)
+        raise RuntimeError(
+            tr("облако смонтировано, но не читается: {exc} — проверьте доступ (rclone lsd {name}:)").format(
+                exc=exc, name=clean_name(remote))) from exc
     with _lock:
         _mounted_by_us.add(clean_name(remote))
     return path

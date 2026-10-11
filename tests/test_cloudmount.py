@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -77,6 +78,28 @@ class CloudMountCoreTests(unittest.TestCase):
         self.assertIn("gdrive", path)
         self.assertIn("gdrive", cloudmount._mounted_by_us)
 
+    def test_mount_unreadable_cloud_raises_and_unmounts(self):
+        # Яндкес-кейс 10.2026: mount поднимается, но листинг даёт I/O
+        # ошибку — mount() обязан размонтировать и честно бросить RuntimeError
+        class FakeProc:
+            stderr = None
+
+            def wait(self):
+                return 0
+
+        with unittest.mock.patch.object(subprocess_popen(), "Popen",
+                                        return_value=FakeProc()), \
+             unittest.mock.patch.object(os.path, "ismount",
+                                        side_effect=[False, True]), \
+             unittest.mock.patch.object(os, "scandir",
+                                        side_effect=OSError("input/output error")), \
+             unittest.mock.patch.object(cloudmount, "unmount") as mock_umd:
+            with self.assertRaises(RuntimeError) as cm:
+                cloudmount.mount(self.remote)
+        self.assertIn("не читается", str(cm.exception))
+        self.assertIn("input/output error", str(cm.exception))
+        mock_umd.assert_called_once()
+
     def test_mount_failure_raises(self):
         class FakeProc:
             stderr = None
@@ -127,6 +150,13 @@ class CloudMountLiveTests(unittest.TestCase):
         # страховка: не лезем в чужие монтирования
         if cloudmount.is_mounted("yad:"):
             self.skipTest("yad: уже смонтирован вне теста")
+        # страховка от сломанного облака (Яндекс 10.2026: 410 на листинг
+        # для токенов rclone-приложения — серверное ограничение)
+        probe = subprocess.run(
+            [cloudmount.rclone_bin() or "rclone", "lsd", "yad:"],
+            capture_output=True, timeout=60)
+        if probe.returncode != 0:
+            self.skipTest("yad: не читается (облако недоступно)")
 
     def test_mount_list_unmount(self):
         path = cloudmount.mount("yad:")

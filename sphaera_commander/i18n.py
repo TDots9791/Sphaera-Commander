@@ -510,6 +510,9 @@ _T = {
     "Облачный диск": ("Cloud drive", "云端磁盘"),
     "rclone не найден": ("rclone not found", "未找到 rclone"),
     "монтирование не поднялось": ("the mount did not come up", "挂载未能建立"),
+    "облако смонтировано, но не читается: {exc} — проверьте доступ (rclone lsd {name}:)":
+        ("cloud mounted, but not readable: {exc} — check access (rclone lsd {name}:)",
+         "云盘已挂载，但无法读取：{exc} — 请检查访问权限（rclone lsd {name}:）"),
     "fusermount3 не найден": ("fusermount3 not found", "未找到 fusermount3"),
     "Быстрый поиск: {prefix}*": ("Quick search: {prefix}*", "快速搜索：{prefix}*"),
     "Быстрый поиск: {prefix}* — нет совпадений": ("Quick search: {prefix}* — no match", "快速搜索：{prefix}* — 无匹配"),
