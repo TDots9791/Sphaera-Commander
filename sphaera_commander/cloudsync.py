@@ -237,6 +237,19 @@ def run_reconnect(remote_name: str, timeout: int = 300) -> int:
     return proc.returncode
 
 
+AUTHORIZE_URL = "https://oauth.yandex.ru/authorize"
+
+
+def authorize_url(client_id: str) -> str:
+    """Страница входа для схемы «код подтверждения» (verification_code):
+    Яндекс новые приложения запирает на редирект oauth.yandex.ru, код
+    пользователь копирует вручную."""
+    from urllib.parse import quote
+
+    return (f"{AUTHORIZE_URL}?response_type=code"
+            f"&client_id={quote(client_id)}")
+
+
 def remote_dirs(remote_path: str) -> list[str]:
     """Подкаталоги на remote ('gdrive:' или 'gdrive:docs') через rclone lsd."""
     rclone = rclone_bin()

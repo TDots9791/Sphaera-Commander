@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from . import __version__, config, i18n
 from .cloudsync import rclone_remotes as cloudsync_remotes
+from .cloudsync import authorize_url as cloudsync_authorize_url
 from .i18n import tr
 from . import cloudmount, hotlist, mounts
 from . import pluginmgr as plugins_mod
@@ -790,9 +791,9 @@ class MainWindow(QMainWindow):
 
                 rc = cloudsync.run_reconnect(remote)
                 if rc != 0:
-                    def fail():
-                        self._status(tr("Вход на Яндекс.Диск не завершён (повторите «подключить как диск»)"))
-                    self.gui_call.emit(fail)
+                    def fallback():
+                        self._yandex_manual_code(remote, panel)
+                    self.gui_call.emit(fallback)
                     return
                 after_reconnect()
 
@@ -834,6 +835,44 @@ class MainWindow(QMainWindow):
                                 tr("Не удалось сохранить ключи: {err}").format(err=exc))
             return False
         return True
+
+    def _yandex_manual_code(self, remote: str, panel: FilePanel) -> None:
+        """Схема «код подтверждения»: новые приложения Яндекса заперты на
+        редирект oauth.yandex.ru/verification_code — код копируется
+        вручную, приложение обменивает его на токен (без редиректа)."""
+        import webbrowser
+
+        from sphaera_commander.dialogs import YandexCodeDialog
+
+        client_id, _secret = cloudmount.credentials_of(remote)
+        if not client_id:
+            self._status(tr("Ключи приложения не введены"))
+            return
+        webbrowser.open(cloudsync_authorize_url(client_id))
+        self._status(tr("🌐 войдите на Яндексе и вставьте код подтверждения…"))
+        dlg = YandexCodeDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        code = dlg.code.text().strip()
+        if not code:
+            return
+        self._status(tr("⏳ обмен кода на токен…"))
+
+        def worker():
+            try:
+                cloudmount.exchange_code(remote, code)
+            except Exception as exc:
+                def fail():
+                    self._status(tr("Не удалось получить токен: {err}").format(err=exc))
+                self.gui_call.emit(fail)
+                return
+
+            def apply():
+                self._mount_cloud(remote, panel, _reconnected=True)
+            self.gui_call.emit(apply)
+
+        threading.Thread(target=worker, daemon=True,
+                         name="yandex-code").start()
 
     def _unmount_cloud(self, remote: str, panel: FilePanel) -> None:
         try:

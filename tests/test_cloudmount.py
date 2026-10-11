@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import unittest.mock
+import urllib.request
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -123,6 +124,49 @@ class CloudMountCoreTests(unittest.TestCase):
                                         return_value=FakeProc(dump)):
             self.assertTrue(cloudmount.has_client_id("yandex:"))
             self.assertFalse(cloudmount.has_client_id("yad:"))
+            client_id, secret = cloudmount.credentials_of("yandex:")
+            self.assertEqual((client_id, secret), ("abc", ""))
+            client_id, secret = cloudmount.credentials_of("yad:")
+            self.assertEqual((client_id, secret), ("", ""))
+
+    def test_exchange_code_writes_token(self):
+        # схема verification_code: код -> /token -> токен в конфиг remote
+        import json
+
+        class FakeResp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return json.dumps({"access_token": "tok",
+                                   "refresh_token": "ref",
+                                   "expires_in": 3600}).encode()
+
+        class FakeProc:
+            def __init__(self, out=None):
+                self.stdout = out
+
+        dump = json.dumps({"yandex": {"type": "yandex", "client_id": "cid",
+                                      "client_secret": "csec"}})
+        with unittest.mock.patch.object(cloudmount, "rclone_bin",
+                                        return_value="/usr/bin/rclone"), \
+             unittest.mock.patch.object(cloudmount.subprocess, "run",
+                                        side_effect=[FakeProc(dump),
+                                                     FakeProc(dump),
+                                                     FakeProc()]) as mock_run, \
+             unittest.mock.patch.object(urllib.request, "urlopen",
+                                        return_value=FakeResp()):
+            cloudmount.exchange_code("yandex:", "код")
+        token_write = [c for c in mock_run.call_args_list
+                       if c.args and "token" in c.args[0]][0]
+        self.assertEqual(token_write.args[0][:3],
+                         ["/usr/bin/rclone", "config", "update"])
+        token = json.loads(token_write.args[0][-1])
+        self.assertEqual(token["access_token"], "tok")
+        self.assertEqual(token["refresh_token"], "ref")
 
     def test_set_client_credentials_command(self):
         class FakeProc:

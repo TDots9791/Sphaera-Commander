@@ -828,6 +828,31 @@ class YandexKeyDialog(QDialog):
         self.client_id.setFocus()
 
 
+class YandexCodeDialog(QDialog):
+    """Второй шаг ручной схемы: вставить код подтверждения, показанный
+    Яндексе на странице авторизации (redirect verification_code)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Яндекс.Диск: код подтверждения"))
+        self.setMinimumWidth(460)
+        layout = QVBoxLayout(self)
+        note = QLabel(tr(
+            "На открывшейся странице Яндекса войдите, нажмите «Разрешить» — "
+            "появится код подтверждения. Скопируйте его сюда."))
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        self.code = QLineEdit()
+        form.addRow(tr("Код подтверждения"), self.code)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.code.setFocus()
+
+
 class PluginsDialog(QDialog):
     """Управление модулями: включение/выключение (применяется после
     перезапуска), источник, текст ошибки загрузки."""

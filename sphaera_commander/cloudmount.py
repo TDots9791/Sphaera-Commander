@@ -10,6 +10,7 @@ Remote из конфигурации rclone (yad:, gdrive:, …) монтиру�
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import shutil
@@ -22,6 +23,7 @@ from .i18n import tr
 MOUNT_ROOT = os.path.expanduser(
     "~/.local/share/sphaera-commander/cloud-mounts")
 DAEMON_WAIT = 15  # секунд на готовность монтирования
+TOKEN_URL = "https://oauth.yandex.ru/token"
 
 # человекочитаемые имена известных remote
 REMOTE_TITLES = {
@@ -69,20 +71,24 @@ def primary_remotes(remotes: list[str]) -> list[str]:
 
 
 def has_client_id(remote: str) -> bool:
-    """В конфиге remote задан свой client_id (доступ через приложение
-    пользователя, а не через OAuth-приложение rclone)."""
+    client_id, _secret = credentials_of(remote)
+    return bool(client_id)
+
+
+def credentials_of(remote: str) -> tuple[str, str]:
+    """(client_id, client_secret) из конфига remote; пустые — не заданы."""
     rclone = rclone_bin()
     if rclone is None:
-        return False
+        return "", ""
     try:
         proc = subprocess.run([rclone, "config", "dump"],
                               capture_output=True, text=True, timeout=30,
                               check=True)
         data = json.loads(proc.stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
-        return False
+        return "", ""
     section = data.get(clean_name(remote)) or {}
-    return bool(section.get("client_id"))
+    return section.get("client_id") or "", section.get("client_secret") or ""
 
 
 def set_client_credentials(remote: str, client_id: str,
@@ -94,6 +100,52 @@ def set_client_credentials(remote: str, client_id: str,
         raise RuntimeError(tr("rclone не найден"))
     subprocess.run([rclone, "config", "update", clean_name(remote),
                     "client_id", client_id, "client_secret", client_secret],
+                   check=True, capture_output=True, timeout=30)
+
+
+def exchange_code(remote: str, code: str) -> None:
+    """Схема «код подтверждения» (verification_code): обменять код,
+    показанный на странице Яндекса, на токен и записать его в конфиг
+    remote — то же, что делает config reconnect, но без редиректа."""
+    client_id, client_secret = credentials_of(remote)
+    if not client_id or not client_secret:
+        raise RuntimeError(tr("ключи приложения не заданы"))
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from datetime import datetime, timedelta, timezone
+
+    data = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+    }).encode()
+    try:
+        with urllib.request.urlopen(TOKEN_URL, data=data, timeout=30) as resp:
+            payload = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode(errors="replace")
+        raise RuntimeError(f"{exc.code}: {detail}") from exc
+    except OSError as exc:
+        raise RuntimeError(str(exc)) from exc
+    if not payload.get("access_token"):
+        raise RuntimeError(tr("Яндекс не вернул access_token"))
+    expires = int(payload.get("expires_in", 31536000))
+    expiry = (dt.datetime.now(dt.timezone.utc)
+              + dt.timedelta(seconds=expires)).isoformat()
+    token = json.dumps({
+        "access_token": payload["access_token"],
+        "token_type": payload.get("token_type", "bearer"),
+        "refresh_token": payload.get("refresh_token", ""),
+        "expiry": expiry,
+    })
+    rclone = rclone_bin()
+    if rclone is None:
+        raise RuntimeError(tr("rclone не найден"))
+    subprocess.run([rclone, "config", "update", clean_name(remote),
+                    "token", token],
                    check=True, capture_output=True, timeout=30)
 
 

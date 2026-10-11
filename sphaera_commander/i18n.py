@@ -489,10 +489,21 @@ _T = {
     "🔑 Яндекс.Диск: вход через ваше приложение…":
         ("🔑 Yandex Disk: signing in via your own application…",
          "🔑 Yandex 磁盘：正在通过您的应用程序登录…"),
-    "Вход на Яндекс.Диск не завершён (повторите «подключить как диск»)":
-        ("Yandex Disk sign-in was not completed (try \"connect as disk\" again)",
-         "未完成 Yandex 磁盘登录（请再次选择“作为磁盘连接”）"),
     "Ключи приложения не введены": ("Application keys were not entered", "未输入应用程序密钥"),
+    "Не удалось получить токен: {err}":
+        ("Failed to obtain the token: {err}", "无法获取令牌：{err}"),
+    "Яндекс.Диск: код подтверждения":
+        ("Yandex Disk: confirmation code", "Yandex 磁盘：确认代码"),
+    "На открывшейся странице Яндекса войдите, нажмите «Разрешить» — появится код подтверждения. Скопируйте его сюда.":
+        ("On the Yandex page that opened, sign in, press \"Allow\" — a confirmation code will appear. Copy it here.",
+         "在打开的 Yandex 页面上登录并点击“允许”——将出现确认代码。请将其复制到此处。"),
+    "Код подтверждения": ("Confirmation code", "确认代码"),
+    "🌐 войдите на Яндексе и вставьте код подтверждения…":
+        ("🌐 sign in on Yandex and paste the confirmation code…",
+         "🌐 请在 Yandex 登录并粘贴确认代码…"),
+    "⏳ обмен кода на токен…": ("⏳ exchanging the code for a token…", "⏳ 正在将代码兑换为令牌…"),
+    "Яндекс не вернул access_token": ("Yandex did not return an access_token", "Yandex 未返回 access_token"),
+    "ключи приложения не заданы": ("application keys are not set", "未设置应用程序密钥"),
     "Не удалось сохранить ключи: {err}":
         ("Failed to save the keys: {err}", "无法保存密钥：{err}"),
     "Яндекс.Диск": ("Yandex Disk", "Yandex 磁盘"),
