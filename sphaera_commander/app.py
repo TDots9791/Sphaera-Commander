@@ -770,35 +770,18 @@ class MainWindow(QMainWindow):
     def _cloud_remotes() -> list[str]:
         return cloudsync_remotes()
 
-    def _mount_cloud(self, remote: str, panel: FilePanel,
-                     _reconnected: bool = False) -> None:
+    def _mount_cloud(self, remote: str, panel: FilePanel) -> None:
         # Яндекс: при первом монтировании — ключи приложения пользователя
-        # (листинг через OAuth-приложение rclone Яндекс блокирует) и вход
-        # через это приложение; затем обычное монтирование
-        if (cloudmount.clean_name(remote) == "yandex" and not _reconnected
+        # (листинг через OAuth-приложение rclone Яндекс блокирует), затем
+        # вход по схеме «код подтверждения» (redirect у новых приложений
+        # заперт на oauth.yandex.ru/verification_code — reconnect с
+        # локальным 127.0.0.1:53682 всегда даёт «redirect_uri mismatch»,
+        # поэтому сразу ручная схема) и монтирование
+        if (cloudmount.clean_name(remote) == "yandex"
                 and not cloudmount.has_client_id(remote)):
             if not self._ask_yandex_credentials():
                 return
-            self._status(tr("🔑 Яндекс.Диск: вход через ваше приложение…"))
-
-            def after_reconnect():
-                def apply():
-                    self._mount_cloud(remote, panel, _reconnected=True)
-                self.gui_call.emit(apply)
-
-            def worker():
-                from sphaera_commander import cloudsync
-
-                rc = cloudsync.run_reconnect(remote)
-                if rc != 0:
-                    def fallback():
-                        self._yandex_manual_code(remote, panel)
-                    self.gui_call.emit(fallback)
-                    return
-                after_reconnect()
-
-            threading.Thread(target=worker, daemon=True,
-                             name="yandex-auth").start()
+            self._yandex_manual_code(remote, panel)
             return
 
         self._status(tr("⏳ подключение облачного диска {title}…").format(
@@ -868,7 +851,7 @@ class MainWindow(QMainWindow):
                 return
 
             def apply():
-                self._mount_cloud(remote, panel, _reconnected=True)
+                self._mount_cloud(remote, panel)
             self.gui_call.emit(apply)
 
         threading.Thread(target=worker, daemon=True,

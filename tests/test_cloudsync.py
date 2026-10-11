@@ -196,13 +196,6 @@ class CloudDialogTests(unittest.TestCase):
             self.assertIn("drive", create)
             self.assertIn("gdrive", create)
 
-    def test_reconnect_remote_command(self):
-        with unittest.mock.patch.object(cloudsync, "rclone_bin",
-                                        return_value="/usr/bin/rclone"):
-            self.assertEqual(cloudsync.reconnect_remote("yandex"),
-                             ["/usr/bin/rclone", "config", "reconnect",
-                              "yandex:"])
-
     def test_dialog_starts_yad_sync(self):
         from sphaera_commander.dialogs import CloudSyncDialog
 
