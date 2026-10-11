@@ -220,6 +220,23 @@ def connect_remote(remote_name: str, backend: str = "drive") -> list[str]:
         [rclone, "config", "reconnect", f"{name}:"]
 
 
+def reconnect_remote(remote_name: str) -> list[str]:
+    """Команда повторного входа OAuth (открывает браузер и ждёт)."""
+    rclone = rclone_bin() or "rclone"
+    return [rclone, "config", "reconnect", f"{remote_name.rstrip(':')}:"]
+
+
+def run_reconnect(remote_name: str, timeout: int = 300) -> int:
+    """Выполнить reconnect: браузер OAuth и ожидание разрешения доступа."""
+    try:
+        proc = subprocess.run(reconnect_remote(remote_name),
+                              capture_output=True, text=True,
+                              timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return -1
+    return proc.returncode
+
+
 def remote_dirs(remote_path: str) -> list[str]:
     """Подкаталоги на remote ('gdrive:' или 'gdrive:docs') через rclone lsd."""
     rclone = rclone_bin()

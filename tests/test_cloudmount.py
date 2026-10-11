@@ -100,6 +100,44 @@ class CloudMountCoreTests(unittest.TestCase):
         self.assertIn("input/output error", str(cm.exception))
         mock_umd.assert_called_once()
 
+    def test_primary_remotes_yandex_dedupe(self):
+        # yandex: и yad: — один Яндекс.Диск; интерфейс работает с yandex:
+        self.assertEqual(
+            cloudmount.primary_remotes(["yad:", "yandex:", "gdrive:"]),
+            ["yandex:", "gdrive:"])
+        self.assertEqual(cloudmount.primary_remotes(["yad:", "gdrive:"]),
+                         ["yad:", "gdrive:"])
+
+    def test_has_client_id_from_config_dump(self):
+        import json
+
+        class FakeProc:
+            def __init__(self, out):
+                self.stdout = out
+
+        dump = json.dumps({"yandex": {"type": "yandex", "client_id": "abc"},
+                           "yad": {"type": "yandex"}})
+        with unittest.mock.patch.object(cloudmount, "rclone_bin",
+                                        return_value="/usr/bin/rclone"), \
+             unittest.mock.patch.object(cloudmount.subprocess, "run",
+                                        return_value=FakeProc(dump)):
+            self.assertTrue(cloudmount.has_client_id("yandex:"))
+            self.assertFalse(cloudmount.has_client_id("yad:"))
+
+    def test_set_client_credentials_command(self):
+        class FakeProc:
+            returncode = 0
+
+        with unittest.mock.patch.object(cloudmount, "rclone_bin",
+                                        return_value="/usr/bin/rclone"), \
+             unittest.mock.patch.object(cloudmount.subprocess,
+                                        "run") as mock_run:
+            cloudmount.set_client_credentials("yandex:", "cid", "csec")
+        cmd = mock_run.call_args[0][0]
+        self.assertEqual(cmd[:3], ["/usr/bin/rclone", "config", "update"])
+        for token in ("yandex", "client_id", "cid", "client_secret", "csec"):
+            self.assertIn(token, cmd)
+
     def test_mount_failure_raises(self):
         class FakeProc:
             stderr = None

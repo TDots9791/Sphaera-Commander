@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -630,7 +632,10 @@ class CloudSyncDialog(QDialog):
             self.table.item(r, 0).setData(Qt.UserRole, p)
 
     def _reload_remotes(self) -> None:
-        remotes = self.cloudsync.rclone_remotes()
+        from . import cloudmount
+
+        # yandex: и yad: — один Яндекс.Диск; интерфейс работает с yandex:
+        remotes = cloudmount.primary_remotes(self.cloudsync.rclone_remotes())
         self.remote_combo.clear()
         self.remote_combo.addItems(remotes)
         if "gdrive:" in remotes:
@@ -781,6 +786,46 @@ class CloudSyncDialog(QDialog):
         self._reload_remotes()
         _start, ok, fail = self._cloud_texts(remote)
         self.log.setText(ok if rc == 0 else fail)
+
+
+class YandexKeyDialog(QDialog):
+    """Разовый ввод client_id/client_secret приложения Яндекса владельца.
+
+    Яндекс блокирует листинг для токенов OAuth-приложения rclone (410
+    «Ресурс больше недоступен», 10.2026) — доступ работает через
+    собственное приложение пользователя. Ключи сохраняются в конфиг
+    remote «yandex» и больше не запрашиваются; после сохранения
+    открывается браузер для входа через это приложение.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Яндекс.Диск: доступ через ваше приложение"))
+        self.setMinimumWidth(540)
+        layout = QVBoxLayout(self)
+        note = QLabel(tr(
+            "Яндекс блокирует список файлов для приложения rclone (ошибка 410), "
+            "поэтому Яндекс.Диск подключается через ВАШЕ приложение.\n\n"
+            "1. Откройте oauth.yandex.ru → «Загрузить» → ваше приложение Ya.D.\n"
+            "2. В поле Redirect URL добавьте http://127.0.0.1:53682/ и сохраните.\n"
+            "3. Вставьте Client ID и Client secret ниже.\n\n"
+            "Ключи запрашиваются один раз и сохраняются в конфиг rclone; "
+            "после нажатия OK откроется браузер для входа на Яндекс.Диск."))
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        self.client_id = QLineEdit()
+        self.client_id.setPlaceholderText(tr("например, 1a2b3c4d5e6f7g8h9i0j"))
+        self.client_secret = QLineEdit()
+        self.client_secret.setPlaceholderText(tr("секрет приложения Яндекса"))
+        form.addRow(tr("Client ID"), self.client_id)
+        form.addRow(tr("Client secret"), self.client_secret)
+        layout.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.client_id.setFocus()
 
 
 class PluginsDialog(QDialog):

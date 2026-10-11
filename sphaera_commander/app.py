@@ -718,7 +718,7 @@ class MainWindow(QMainWindow):
                         lambda d=dev: self._mount_device(d, panel))
         menu.addSeparator()
         menu.addAction(tr("Синхронизация с облаком…"), self.open_cloud_sync)
-        for remote in cloudsync_remotes():
+        for remote in cloudmount.primary_remotes(cloudsync_remotes()):
             name = cloudmount.title(remote)
             if cloudmount.is_mounted(remote):
                 path = cloudmount.mountpoint(remote)
@@ -769,7 +769,37 @@ class MainWindow(QMainWindow):
     def _cloud_remotes() -> list[str]:
         return cloudsync_remotes()
 
-    def _mount_cloud(self, remote: str, panel: FilePanel) -> None:
+    def _mount_cloud(self, remote: str, panel: FilePanel,
+                     _reconnected: bool = False) -> None:
+        # Яндекс: при первом монтировании — ключи приложения пользователя
+        # (листинг через OAuth-приложение rclone Яндекс блокирует) и вход
+        # через это приложение; затем обычное монтирование
+        if (cloudmount.clean_name(remote) == "yandex" and not _reconnected
+                and not cloudmount.has_client_id(remote)):
+            if not self._ask_yandex_credentials():
+                return
+            self._status(tr("🔑 Яндекс.Диск: вход через ваше приложение…"))
+
+            def after_reconnect():
+                def apply():
+                    self._mount_cloud(remote, panel, _reconnected=True)
+                self.gui_call.emit(apply)
+
+            def worker():
+                from sphaera_commander import cloudsync
+
+                rc = cloudsync.run_reconnect(remote)
+                if rc != 0:
+                    def fail():
+                        self._status(tr("Вход на Яндекс.Диск не завершён (повторите «подключить как диск»)"))
+                    self.gui_call.emit(fail)
+                    return
+                after_reconnect()
+
+            threading.Thread(target=worker, daemon=True,
+                             name="yandex-auth").start()
+            return
+
         self._status(tr("⏳ подключение облачного диска {title}…").format(
             title=cloudmount.title(remote)))
 
@@ -785,6 +815,25 @@ class MainWindow(QMainWindow):
             self.gui_call.emit(apply)
 
         cloudmount.mount_async(remote, on_done)
+
+    def _ask_yandex_credentials(self) -> bool:
+        from sphaera_commander.dialogs import YandexKeyDialog
+
+        dlg = YandexKeyDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return False
+        client_id = dlg.client_id.text().strip()
+        client_secret = dlg.client_secret.text().strip()
+        if not client_id or not client_secret:
+            self._status(tr("Ключи приложения не введены"))
+            return False
+        try:
+            cloudmount.set_client_credentials("yandex:", client_id, client_secret)
+        except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            QMessageBox.warning(self, tr("Яндекс.Диск"),
+                                tr("Не удалось сохранить ключи: {err}").format(err=exc))
+            return False
+        return True
 
     def _unmount_cloud(self, remote: str, panel: FilePanel) -> None:
         try:

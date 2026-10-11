@@ -178,6 +178,9 @@ class CloudDialogTests(unittest.TestCase):
             dlg = CloudSyncDialog(None, "/home/u/Проект")
             self.assertFalse(dlg.btn_gdrive.isHidden())
             self.assertTrue(dlg.btn_yandex.isHidden())
+            # yandex: и yad: — один диск: в комбобоксе один Яндексе-remote
+            self.assertEqual(dlg.remote_combo.count(), 1)
+            self.assertEqual(dlg.remote_combo.itemText(0), "yandex:")
 
     def test_connect_remote_yandex_and_gdrive(self):
         with unittest.mock.patch.object(cloudsync, "rclone_bin",
@@ -192,6 +195,13 @@ class CloudDialogTests(unittest.TestCase):
             create, _reconnect = cloudsync.connect_remote("gdrive")
             self.assertIn("drive", create)
             self.assertIn("gdrive", create)
+
+    def test_reconnect_remote_command(self):
+        with unittest.mock.patch.object(cloudsync, "rclone_bin",
+                                        return_value="/usr/bin/rclone"):
+            self.assertEqual(cloudsync.reconnect_remote("yandex"),
+                             ["/usr/bin/rclone", "config", "reconnect",
+                              "yandex:"])
 
     def test_dialog_starts_yad_sync(self):
         from sphaera_commander.dialogs import CloudSyncDialog

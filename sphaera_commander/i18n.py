@@ -486,6 +486,27 @@ _T = {
     "rclone config create yandex yandex, затем вход в браузере":
         ("rclone config create yandex yandex, then sign in via browser",
          "rclone config create yandex yandex，然后在浏览器中登录"),
+    "🔑 Яндекс.Диск: вход через ваше приложение…":
+        ("🔑 Yandex Disk: signing in via your own application…",
+         "🔑 Yandex 磁盘：正在通过您的应用程序登录…"),
+    "Вход на Яндекс.Диск не завершён (повторите «подключить как диск»)":
+        ("Yandex Disk sign-in was not completed (try \"connect as disk\" again)",
+         "未完成 Yandex 磁盘登录（请再次选择“作为磁盘连接”）"),
+    "Ключи приложения не введены": ("Application keys were not entered", "未输入应用程序密钥"),
+    "Не удалось сохранить ключи: {err}":
+        ("Failed to save the keys: {err}", "无法保存密钥：{err}"),
+    "Яндекс.Диск": ("Yandex Disk", "Yandex 磁盘"),
+    "например, 1a2b3c4d5e6f7g8h9i0j":
+        ("e.g. 1a2b3c4d5e6f7g8h9i0j", "例如 1a2b3c4d5e6f7g8h9i0j"),
+    "секрет приложения Яндекса": ("the application secret of Yandex", "Yandex 应用程序的密钥"),
+    "Client ID": ("Client ID", "Client ID"),
+    "Client secret": ("Client secret", "Client secret"),
+    "Яндекс.Диск: доступ через ваше приложение":
+        ("Yandex Disk: access via your own application",
+         "Yandex 磁盘：通过您自己的应用程序访问"),
+    "Яндекс блокирует список файлов для приложения rclone (ошибка 410), поэтому Яндекс.Диск подключается через ВАШЕ приложение.\n\n1. Откройте oauth.yandex.ru → «Загрузить» → ваше приложение Ya.D.\n2. В поле Redirect URL добавьте http://127.0.0.1:53682/ и сохраните.\n3. Вставьте Client ID и Client secret ниже.\n\nКлючи запрашиваются один раз и сохраняются в конфиг rclone; после нажатия OK откроется браузер для входа на Яндекс.Диск.":
+        ("Yandex blocks file listing for the rclone application (error 410), so Yandex Disk connects through YOUR OWN application.\n\n1. Open oauth.yandex.ru → your Ya.D application.\n2. In the Redirect URL field add http://127.0.0.1:53682/ and save.\n3. Paste the Client ID and Client secret below.\n\nThe keys are asked once and stored in the rclone config; after OK a browser will open for the Yandex Disk sign-in.",
+         "Yandex 屏蔽了 rclone 应用程序的文件列表（错误 410），因此 Yandex 磁盘将通过您自己的应用程序连接。\n\n1. 打开 oauth.yandex.ru → 您的 Ya.D 应用程序。\n2. 在 Redirect URL 字段中添加 http://127.0.0.1:53682/ 并保存。\n3. 在下方粘贴 Client ID 和 Client secret。\n\n密钥只需输入一次，保存在 rclone 配置中；点击 OK 后将打开浏览器登录 Yandex 磁盘。"),
     "Синхронизация с облаком": ("Cloud sync", "云同步"),
     "Синхронизация с облаком…": ("Cloud sync…", "云同步…"),
     "Синхронизация уже идёт — дождитесь завершения":

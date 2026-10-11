@@ -10,6 +10,7 @@ Remote из конфигурации rclone (yad:, gdrive:, …) монтиру�
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -25,6 +26,7 @@ DAEMON_WAIT = 15  # секунд на готовность монтирован�
 # человекочитаемые имена известных remote
 REMOTE_TITLES = {
     "yad": "Яндекс.Диск",
+    "yandex": "Яндекс.Диск",
     "gdrive": "Google Диск",
     "dropbox": "Dropbox",
     "onedrive": "OneDrive",
@@ -48,6 +50,51 @@ def title(remote: str) -> str:
     """Отображаемое имя: 'yad:' → «Яндекс.Диск»."""
     name = clean_name(remote)
     return REMOTE_TITLES.get(name, name)
+
+
+def primary_remotes(remotes: list[str]) -> list[str]:
+    """Один remote на диск в интерфейсе: yandex: и yad: — один и тот же
+    Яндекс.Диск; при наличии обоих интерфейс работает с yandex:
+    (доступ через приложение пользователя, см. YandexKeyDialog)."""
+    by_title: dict[str, str] = {}
+    order: list[str] = []
+    for remote in remotes:
+        t = title(remote)
+        if t not in by_title:
+            by_title[t] = remote
+            order.append(t)
+    if "Яндекс.Диск" in by_title and "yandex:" in remotes:
+        by_title["Яндекс.Диск"] = "yandex:"
+    return [by_title[t] for t in order]
+
+
+def has_client_id(remote: str) -> bool:
+    """В конфиге remote задан свой client_id (доступ через приложение
+    пользователя, а не через OAuth-приложение rclone)."""
+    rclone = rclone_bin()
+    if rclone is None:
+        return False
+    try:
+        proc = subprocess.run([rclone, "config", "dump"],
+                              capture_output=True, text=True, timeout=30,
+                              check=True)
+        data = json.loads(proc.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+    section = data.get(clean_name(remote)) or {}
+    return bool(section.get("client_id"))
+
+
+def set_client_credentials(remote: str, client_id: str,
+                           client_secret: str) -> None:
+    """Сохранить client_id/client_secret приложения пользователя в конфиг
+    remote (дальнейший OAuth идёт через это приложение)."""
+    rclone = rclone_bin()
+    if rclone is None:
+        raise RuntimeError(tr("rclone не найден"))
+    subprocess.run([rclone, "config", "update", clean_name(remote),
+                    "client_id", client_id, "client_secret", client_secret],
+                   check=True, capture_output=True, timeout=30)
 
 
 def mountpoint(remote: str) -> str:
