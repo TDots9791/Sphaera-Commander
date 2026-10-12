@@ -770,14 +770,15 @@ class MainWindow(QMainWindow):
     def _cloud_remotes() -> list[str]:
         return cloudsync_remotes()
 
-    def _mount_cloud(self, remote: str, panel: FilePanel) -> None:
-        # Яндекс: при первом монтировании — ключи приложения пользователя
-        # (листинг через OAuth-приложение rclone Яндекс блокирует), затем
-        # вход по схеме «код подтверждения» (redirect у новых приложений
-        # заперт на oauth.yandex.ru/verification_code — reconnect с
-        # локальным 127.0.0.1:53682 всегда даёт «redirect_uri mismatch»,
-        # поэтому сразу ручная схема) и монтирование
-        if (cloudmount.clean_name(remote) == "yandex"
+    def _mount_cloud(self, remote: str, panel: FilePanel,
+                     _reauth_done: bool = False) -> None:
+        # Яндекс: доступ через приложение владельца (листинг через
+        # OAuth-приложение rclone Яндекс блокирует). Ключи — при первом
+        # монтировании; если смонтировалось, но не читается (Errno 5 —
+        # токен выпущен не этим приложением) — вход по схеме «код
+        # подтверждения» и повторное монтирование (_reauth_done страхует
+        # от цикла)
+        if (cloudmount.clean_name(remote) == "yandex" and not _reauth_done
                 and not cloudmount.has_client_id(remote)):
             if not self._ask_yandex_credentials():
                 return
@@ -790,6 +791,12 @@ class MainWindow(QMainWindow):
         def on_done(path, error):
             def apply():
                 if error is not None:
+                    if (cloudmount.clean_name(remote) == "yandex"
+                            and not _reauth_done
+                            and "не читается" in error):
+                        # токен недействителен — повторный вход по коду
+                        self._yandex_manual_code(remote, panel)
+                        return
                     self._status(tr("Не удалось подключить {title}: {err}").format(
                         title=cloudmount.title(remote), err=error))
                     return
@@ -851,7 +858,7 @@ class MainWindow(QMainWindow):
                 return
 
             def apply():
-                self._mount_cloud(remote, panel)
+                self._mount_cloud(remote, panel, _reauth_done=True)
             self.gui_call.emit(apply)
 
         threading.Thread(target=worker, daemon=True,
