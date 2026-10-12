@@ -233,6 +233,81 @@ def authorize_url(client_id: str) -> str:
             f"&client_id={quote(client_id)}")
 
 
+def remote_meta(remote_path: str) -> dict | None:
+    """Размер и md5 файла на remote ('yandex:путь') через rclone lsjson.
+
+    None — rclone недоступен или сервер не ответил; md5 может отсутствовать,
+    если бэкенд его не считает (тогда ключа 'md5' в ответе не будет).
+    """
+    rclone = rclone_bin()
+    if rclone is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [rclone, "lsjson", "--stat", "--hash", remote_path],
+            capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    hashes = data.get("Hashes") or {}
+    meta = {"size": data.get("Size", -1)}
+    md5 = hashes.get("MD5")
+    if md5:
+        meta["md5"] = md5.lower()
+    return meta
+
+
+# бэкенды, для которых подходят пары ya.d (remote без префикса — путь на
+# Диске того же аккаунта, что и remote 'yad:'/'yandex:'); 'yad' и 'yandex'
+# — разные rclone-remote одного и того же диска, зеркало у них общее
+_YAD_BACKENDS = {"yad", "yandex"}
+
+
+def _same_backend(a: str, b: str) -> bool:
+    return a == b or (a in _YAD_BACKENDS and b in _YAD_BACKENDS)
+
+
+def mirror_for_remote(remote_path: str) -> str | None:
+    """Локальный кандидат из пар синхронизации для облачного пути.
+
+    remote_path — 'backend:путь' (yandex:Папка-пример/...). Ищем пару
+    (ya.d или собственную), чей удалённый корень — префикс пути; возвращаем
+    самый длинный префикс. Файл может не существовать или быть устаревшим —
+    проверка на вызывающей стороне (размер/md5). None — пары нет.
+    """
+    backend, _sep, rel = remote_path.partition(":")
+    rel = rel.lstrip("/")
+    best: tuple[int, str] | None = None
+    sources = [("sphaera", load_pairs())]
+    if backend in _YAD_BACKENDS:
+        sources.append(("yad", yad_pairs()))
+    for source, pairs in sources:
+        for p in pairs:
+            if source == "sphaera":
+                p_backend, _s, p_rel = p["remote"].partition(":")
+                if not _s:
+                    p_backend, p_rel = "yad", p["remote"]
+            else:
+                p_backend, p_rel = "yad", p["remote"]
+            p_rel = p_rel.strip("/")
+            if not _same_backend(p_backend, backend):
+                continue
+            if p_rel and not rel.startswith(p_rel + "/") and rel != p_rel:
+                continue
+            rest = rel[len(p_rel):].lstrip("/") if p_rel else rel
+            candidate = os.path.join(os.path.expanduser(p["local"]),
+                                     *rest.split("/")) if rest else \
+                os.path.expanduser(p["local"])
+            if best is None or len(p_rel) > best[0]:
+                best = (len(p_rel), candidate)
+    return best[1] if best else None
+
+
 def remote_dirs(remote_path: str) -> list[str]:
     """Подкаталоги на remote ('gdrive:' или 'gdrive:docs') через rclone lsd."""
     rclone = rclone_bin()

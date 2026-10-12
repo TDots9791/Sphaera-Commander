@@ -14,6 +14,7 @@ import shutil
 import stat
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -22,6 +23,13 @@ from PySide6.QtCore import QObject, Signal
 
 CHUNK = 1024 * 1024
 PROGRESS_EVERY_BYTES = 4 * CHUNK
+
+# Устойчивое копирование из облака: сбойный файл (сервер не отдал) не
+# останавливает операцию — после основного прохода к сбойным возвращаются
+# с докачкой (.part), затем подключаются запасные инструменты
+# (cloudmount.fallback_download: зеркало синхронизации, прямой rclone).
+CLOUD_RETRY_PAUSE_S = 5
+PART_SUFFIX = ".sphaera-part"
 
 POLICY_OVERWRITE = "overwrite"
 POLICY_SKIP = "skip"
@@ -79,6 +87,7 @@ class OpResult:
     done_bytes: int = 0
     skipped: int = 0
     errors: list[FileError] = field(default_factory=list)
+    recovered: list[FileError] = field(default_factory=list)  # запасные инструменты
     cancelled: bool = False
 
     @property
@@ -247,6 +256,97 @@ def _copy_file(src: str, dst: str, progress, done_bytes_holder: list, is_cancell
     progress.cb(progress.state)
 
 
+def _copy_file_resumable(src: str, dst: str, expected: int,
+                         progress, done_bytes_holder: list,
+                         is_cancelled) -> None:
+    """Копия с докачкой: частичные данные копятся в dst + PART_SUFFIX.
+
+    Повторный вызов после сбоя продолжает с размера .part (источник
+    открывается заново и позиционируется на тот же offset). Успех —
+    атомарная замена dst; размер сверяется с expected (если >= 0).
+    """
+    part = dst + PART_SUFFIX
+    offset = 0
+    if os.path.exists(part):
+        offset = os.path.getsize(part)
+        if expected >= 0 and offset > expected:
+            offset = 0
+    if expected != 0 and (expected < 0 or offset != expected):
+        with open(src, "rb") as fsrc:
+            fsrc.seek(offset)
+            with open(part, "r+b" if offset else "wb") as fdst:
+                if offset:
+                    fdst.seek(offset)
+                while True:
+                    if is_cancelled():
+                        raise InterruptedError
+                    chunk = fsrc.read(CHUNK)
+                    if not chunk:
+                        break
+                    fdst.write(chunk)
+                    offset += len(chunk)
+                    done_bytes_holder[0] += len(chunk)
+                    if (done_bytes_holder[0] - progress.last_emit
+                            >= PROGRESS_EVERY_BYTES):
+                        progress.last_emit = done_bytes_holder[0]
+                        progress.cb(progress.state)
+    elif expected == 0 and not os.path.exists(part):
+        open(part, "wb").close()
+    got = os.path.getsize(part)
+    if expected >= 0 and got != expected:
+        raise OSError(tr("получено {got} из {expected} байт").format(
+            got=got, expected=expected))
+    shutil.copymode(src, part)
+    shutil.copystat(src, part)
+    os.replace(part, dst)
+    progress.state.done_bytes = done_bytes_holder[0]
+    progress.state.current = src
+    progress.cb(progress.state)
+
+
+def _drop_part(dst: str) -> None:
+    try:
+        os.unlink(dst + PART_SUFFIX)
+    except OSError:
+        pass
+
+
+# Запасное скачивание облачного файла; точка инъекции для платформенного
+# слоя (как trash_via_platform). По умолчанию — cloudmount.fallback_download
+# (зеркало синхронизации, затем прямой rclone copyto).
+cloud_fallback: Callable[[str, str, int, Callable[[], bool]],
+                         tuple[bool, str]] | None = None
+
+
+def _is_cloud_path(path: str) -> bool:
+    try:
+        from . import cloudmount
+    except ImportError:
+        return False
+    return cloudmount.is_cloud_path(path)
+
+
+def _cloud_fallback(src: str, dst: str, expected: int,
+                    is_cancelled) -> tuple[bool, str]:
+    if cloud_fallback is not None:
+        return cloud_fallback(src, dst, expected, is_cancelled)
+    try:
+        from . import cloudmount
+    except ImportError:
+        return False, tr("облачный слой недоступен")
+    return cloudmount.fallback_download(src, dst, expected, is_cancelled)
+
+
+def _sleep_cancel(seconds: float, is_cancelled) -> bool:
+    """Пауза с проверкой отмены; True — операция отменена."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if is_cancelled():
+            return True
+        time.sleep(0.2)
+    return is_cancelled()
+
+
 class _ProgressHelper:
     __slots__ = ("state", "cb", "last_emit")
 
@@ -292,17 +392,56 @@ def execute_copy_move(plan: Plan, move: bool, policy: str,
                      total_files=plan.total_files, done_bytes=0,
                      total_bytes=plan.total_bytes)
     helper = _ProgressHelper(state, progress_cb)
+    # сбойные облачные файлы: к ним возвращаются после основного прохода
+    pending: list[tuple[Job, str]] = []
+
+    def _finish_file(job: Job) -> None:
+        nonlocal done_bytes
+        done_bytes = helper.state.done_bytes
+        state.done_bytes = done_bytes
+        if move:
+            os.unlink(job.src)
+        result.done_files += 1
+        state.done_files = result.done_files
 
     progress_cb(state)  # начальное состояние
-    for job in plan.jobs:
-        if is_cancelled():
-            result.cancelled = True
-            return result
-        state.current = job.dst
-        state.done_bytes = done_bytes
-        progress_cb(state)
-        try:
-            if job.via_rename:
+    try:
+        for job in plan.jobs:
+            if is_cancelled():
+                result.cancelled = True
+                return result
+            state.current = job.dst
+            state.done_bytes = done_bytes
+            progress_cb(state)
+            try:
+                if job.via_rename:
+                    if os.path.lexists(job.dst):
+                        action = resolve(job)
+                        if action is None:
+                            result.cancelled = True
+                            return result
+                        if action == "skip":
+                            result.skipped += 1
+                            continue
+                        if os.path.isdir(job.dst) and not os.path.islink(job.dst):
+                            result.errors.append(FileError(
+                                job.dst, tr("в назначении каталог с тем же именем")))
+                            continue
+                        os.unlink(job.dst)
+                    os.rename(job.src, job.dst)
+                    result.done_files += 1
+                    result.done_bytes += job.size
+                    done_bytes += job.size
+                    state.done_files = result.done_files
+                    state.done_bytes = done_bytes
+                    progress_cb(state)
+                    continue
+                if job.is_dir:
+                    os.makedirs(job.dst, exist_ok=True)
+                    continue
+                if job.dst in skip_set:
+                    result.skipped += 1
+                    continue
                 if os.path.lexists(job.dst):
                     action = resolve(job)
                     if action is None:
@@ -310,71 +449,100 @@ def execute_copy_move(plan: Plan, move: bool, policy: str,
                         return result
                     if action == "skip":
                         result.skipped += 1
+                        state.done_files = result.done_files
+                        progress_cb(state)
+                        continue
+                    if job.is_link:
+                        os.unlink(job.dst)
+                        os.symlink(os.readlink(job.src), job.dst)
+                        result.done_files += 1
+                        state.done_files = result.done_files
+                        progress_cb(state)
                         continue
                     if os.path.isdir(job.dst) and not os.path.islink(job.dst):
                         result.errors.append(FileError(
                             job.dst, tr("в назначении каталог с тем же именем")))
                         continue
                     os.unlink(job.dst)
-                os.rename(job.src, job.dst)
-                result.done_files += 1
-                result.done_bytes += job.size
-                done_bytes += job.size
-                state.done_files = result.done_files
-                state.done_bytes = done_bytes
-                progress_cb(state)
-                continue
-            if job.is_dir:
-                os.makedirs(job.dst, exist_ok=True)
-                continue
-            if job.dst in skip_set:
-                result.skipped += 1
-                continue
-            if os.path.lexists(job.dst):
-                action = resolve(job)
-                if action is None:
-                    result.cancelled = True
-                    return result
-                if action == "skip":
-                    result.skipped += 1
-                    state.done_files = result.done_files
-                    progress_cb(state)
-                    continue
-                if job.is_link:
-                    os.unlink(job.dst)
+                elif job.is_link:
                     os.symlink(os.readlink(job.src), job.dst)
                     result.done_files += 1
                     state.done_files = result.done_files
                     progress_cb(state)
                     continue
-                if os.path.isdir(job.dst) and not os.path.islink(job.dst):
-                    result.errors.append(FileError(
-                        job.dst, tr("в назначении каталог с тем же именем")))
+                if job.is_link:
                     continue
-                os.unlink(job.dst)
-            elif job.is_link:
-                os.symlink(os.readlink(job.src), job.dst)
-                result.done_files += 1
-                state.done_files = result.done_files
-                progress_cb(state)
-                continue
-            if job.is_link:
-                continue
-            _copy_file(job.src, job.dst, helper, [done_bytes], is_cancelled)
-            done_bytes = helper.state.done_bytes
-            if is_cancelled():
+                if _is_cloud_path(job.src):
+                    try:
+                        _copy_file_resumable(job.src, job.dst, job.size,
+                                             helper, [done_bytes],
+                                             is_cancelled)
+                    except InterruptedError:
+                        result.cancelled = True
+                        return result
+                    except OSError as exc:
+                        pending.append((job, exc.strerror or str(exc)))
+                        continue
+                else:
+                    _copy_file(job.src, job.dst, helper, [done_bytes],
+                               is_cancelled)
+                if is_cancelled():
+                    result.cancelled = True
+                    return result
+                _finish_file(job)
+            except InterruptedError:
                 result.cancelled = True
                 return result
-            if move:
-                os.unlink(job.src)
-            result.done_files += 1
-            state.done_files = result.done_files
-        except InterruptedError:
-            result.cancelled = True
-            return result
-        except OSError as exc:
-            result.errors.append(FileError(job.dst if not job.via_rename else job.src,
-                                           exc.strerror or str(exc)))
+            except OSError as exc:
+                result.errors.append(FileError(job.dst if not job.via_rename else job.src,
+                                               exc.strerror or str(exc)))
+        if pending and not result.cancelled:
+            state.current = tr("Повтор сбойных файлов ({n})…").format(
+                n=len(pending))
+            progress_cb(state)
+            if _sleep_cancel(CLOUD_RETRY_PAUSE_S, is_cancelled):
+                result.cancelled = True
+            for job, first_err in pending:
+                if result.cancelled or is_cancelled():
+                    result.cancelled = True
+                    break
+                state.current = job.dst
+                progress_cb(state)
+                # ни байта не скачалось — повтор начнётся с той же позиции
+                # и с тем же исходом; сразу к запасным инструментам
+                part = job.dst + PART_SUFFIX
+                direct_err = first_err
+                if os.path.exists(part) and os.path.getsize(part) > 0:
+                    try:
+                        _copy_file_resumable(job.src, job.dst, job.size,
+                                             helper, [done_bytes],
+                                             is_cancelled)
+                        _finish_file(job)
+                        continue
+                    except InterruptedError:
+                        result.cancelled = True
+                        break
+                    except OSError as exc:
+                        direct_err = exc.strerror or str(exc)
+                ok, note = _cloud_fallback(job.src, job.dst, job.size,
+                                           is_cancelled)
+                if ok:
+                    done_bytes += job.size
+                    helper.state.done_bytes = done_bytes
+                    _finish_file(job)
+                    result.recovered.append(FileError(job.dst, note))
+                elif is_cancelled():
+                    result.cancelled = True
+                    break
+                else:
+                    result.errors.append(FileError(job.dst, tr(
+                        "{err}; запасные источники недоступны ({note})").format(
+                        err=direct_err, note=note)))
+    finally:
+        # недокачанные .part не нужны: сбойные файлы либо закрыты, либо
+        # внесены в ошибки
+        for job, _err in pending:
+            _drop_part(job.dst)
     return result
 
 

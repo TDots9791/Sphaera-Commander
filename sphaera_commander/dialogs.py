@@ -290,10 +290,15 @@ class BatchRenameDialog(QDialog):
 
 def show_op_result(parent, result: OpResult) -> None:
     """Показать сводку/ошибки операции."""
-    if result.ok:
+    if result.ok and not result.recovered:
         return
+    recovered_details = "\n".join(
+        f"{e.path} — {e.message}" for e in result.recovered[:200])
     if result.errors:
         details = "\n".join(f"{e.path} — {e.message}" for e in result.errors[:200])
+        if result.recovered:
+            details += "\n\n" + tr("Восстановлены запасными инструментами:") \
+                + "\n" + recovered_details
         box = QMessageBox(parent)
         box.setIcon(QMessageBox.Warning)
         box.setWindowTitle(tr("Ошибки операции"))
@@ -308,6 +313,14 @@ def show_op_result(parent, result: OpResult) -> None:
         QMessageBox.information(parent, tr("Операция"),
                                 tr("Операция прервана.\nУспешно: {ok}, пропущено: {skipped}.").format(
                                     ok=result.done_files, skipped=result.skipped))
+    elif result.recovered:
+        box = QMessageBox(parent)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle(tr("Операция"))
+        box.setText(tr("Все файлы скопированы; {n} — запасными инструментами.").format(
+            n=len(result.recovered)))
+        box.setDetailedText(recovered_details)
+        box.exec()
 
 
 class SearchDialog(QDialog):

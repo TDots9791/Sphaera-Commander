@@ -543,6 +543,39 @@ _T = {
         ("cloud mounted, but not readable: {exc} — check access (rclone lsd {name}:)",
          "云盘已挂载，但无法读取：{exc} — 请检查访问权限（rclone lsd {name}:）"),
     "fusermount3 не найден": ("fusermount3 not found", "未找到 fusermount3"),
+    "rclone вернул код {rc}": ("rclone returned code {rc}", "rclone 返回代码 {rc}"),
+    "rclone: {err}": ("rclone: {err}", "rclone: {err}"),
+    "rclone: превышен бюджет времени скачивания":
+        ("rclone: download exceeded the time budget", "rclone: 下载超出时间预算"),
+    "rclone: получено {got} из {expected} байт":
+        ("rclone: received {got} of {expected} bytes", "rclone: 已接收 {got}/{expected} 字节"),
+    "{err}; запасные источники недоступны ({note})":
+        ("{err}; fallback sources unavailable ({note})", "{err}；备用源不可用（{note}）"),
+    "Восстановлены запасными инструментами:":
+        ("Recovered via fallback instruments:", "已通过备用方式恢复："),
+    "Все файлы скопированы; {n} — запасными инструментами.":
+        ("All files copied; {n} via fallback instruments.", "所有文件均已复制；其中 {n} 个通过备用方式。"),
+    "Повтор сбойных файлов ({n})…":
+        ("Retrying failed files ({n})…", "正在重试失败的文件（{n}）…"),
+    "восстановлено из зеркала синхронизации (сверка md5)":
+        ("recovered from sync mirror (md5 verified)", "已从同步镜像恢复（已校验 md5）"),
+    "восстановлено из зеркала синхронизации (сверка размера)":
+        ("recovered from sync mirror (size verified)", "已从同步镜像恢复（已核对大小）"),
+    "зеркало синхронизации не найдено": ("sync mirror not found", "未找到同步镜像"),
+    "зеркало устарело (контрольная сумма не совпала)":
+        ("mirror is stale (checksum mismatch)", "镜像已过期（校验和不匹配）"),
+    "зеркало устарело (размер не совпал)":
+        ("mirror is stale (size mismatch)", "镜像已过期（大小不匹配）"),
+    "зеркало: {mirror}; {note}": ("mirror: {mirror}; {note}", "镜像：{mirror}；{note}"),
+    "нечем сверить размер зеркала":
+        ("nothing to verify the mirror size against", "无法核对镜像大小"),
+    "облачный слой недоступен": ("cloud layer unavailable", "云层不可用"),
+    "получено {got} из {expected} байт":
+        ("received {got} of {expected} bytes", "已接收 {got}/{expected} 字节"),
+    "путь вне облачных монтирований":
+        ("path is outside cloud mounts", "路径不在云挂载范围内"),
+    "скачано напрямую через rclone (в обход монтирования)":
+        ("downloaded directly via rclone (bypassing the mount)", "已通过 rclone 直接下载（绕过挂载）"),
     "Быстрый поиск: {prefix}*": ("Quick search: {prefix}*", "快速搜索：{prefix}*"),
     "Быстрый поиск: {prefix}* — нет совпадений": ("Quick search: {prefix}* — no match", "快速搜索：{prefix}* — 无匹配"),
     "Веточный просмотр: {name}": ("Branch view: {name}", "分支视图：{name}"),

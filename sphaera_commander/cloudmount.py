@@ -11,10 +11,12 @@ Remote из конфигурации rclone (yad:, gdrive:, …) монтиру�
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -24,6 +26,7 @@ MOUNT_ROOT = os.path.expanduser(
     "~/.local/share/sphaera-commander/cloud-mounts")
 DAEMON_WAIT = 15  # секунд на готовность монтирования
 TOKEN_URL = "https://oauth.yandex.ru/token"
+FALLBACK_TIMEOUT = 1800  # секунд на один запасной инструмент скачивания
 
 # человекочитаемые имена известных remote
 REMOTE_TITLES = {
@@ -248,3 +251,168 @@ def wait_ready(remote: str, timeout_s: float = DAEMON_WAIT) -> bool:
             return True
         time.sleep(0.2)
     return False
+
+
+# ------------------------------------------------ запасное скачивание
+#
+# Чтение через FUSE при сбое облака даёт EIO после внутренних ретраев
+# rclone (реальный случай Яндекса 10.2026: метаданные живы, а блоб файла
+# сервер не отдаёт — «500 file IO failure»). Тогда файл добирается
+# запасными инструментами: сначала локальное зеркало пары синхронизации,
+# затем прямой rclone copyto из remote в обход монтирования.
+
+
+def remote_of_path(local_path: str) -> str | None:
+    """Путь в монтировании → 'remote:путь'; вне монтирований — None."""
+    real = os.path.realpath(local_path)
+    root = os.path.realpath(MOUNT_ROOT)
+    if not real.startswith(root + os.sep):
+        return None
+    name, sep, rel = real[len(root) + 1:].partition(os.sep)
+    if not name:
+        return None
+    return f"{name}:{rel}" if sep else f"{name}:"
+
+
+def _run_cancellable(cmd: list[str], is_cancelled,
+                     timeout_s: float = FALLBACK_TIMEOUT) -> tuple[int, str]:
+    """Запустить команду с отслеживанием отмены и общим бюджетом времени.
+
+    (код, stderr-хвост): 0 — успех, -1 — отмена, -2 — превышен timeout_s.
+    """
+    started = time.monotonic()
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    while proc.poll() is None:
+        if is_cancelled():
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return -1, ""
+        if time.monotonic() - started > timeout_s:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return -2, ""
+        time.sleep(0.2)
+    err = ""
+    if proc.stderr:
+        err = (proc.stderr.read() or "").strip()
+        proc.stderr.close()
+    return proc.returncode, err
+
+
+def _tmp_in_dst_dir(dst: str) -> str:
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst) or ".",
+                               prefix=".sphaera-fb-")
+    os.close(fd)
+    return tmp
+
+
+def _unlink_quiet(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _from_mirror(remote: str, dst: str, expected_size: int) -> tuple[bool, str]:
+    """Достать файл из локального зеркала пары синхронизации (со сверкой)."""
+    from . import cloudsync
+
+    mirror = cloudsync.mirror_for_remote(remote)
+    if not mirror or not os.path.isfile(mirror):
+        return False, tr("зеркало синхронизации не найдено")
+    meta = cloudsync.remote_meta(remote)
+    size = meta["size"] if meta else expected_size
+    if size is None or size < 0:
+        return False, tr("нечем сверить размер зеркала")
+    if os.path.getsize(mirror) != size:
+        return False, tr("зеркало устарело (размер не совпал)")
+    if meta and meta.get("md5"):
+        h = hashlib.md5()
+        with open(mirror, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        if h.hexdigest() != meta["md5"]:
+            return False, tr("зеркало устарело (контрольная сумма не совпала)")
+        note = tr("восстановлено из зеркала синхронизации (сверка md5)")
+    else:
+        note = tr("восстановлено из зеркала синхронизации (сверка размера)")
+    tmp = _tmp_in_dst_dir(dst)
+    try:
+        shutil.copyfile(mirror, tmp)
+        shutil.copystat(mirror, tmp)
+        os.replace(tmp, dst)
+    except OSError:
+        _unlink_quiet(tmp)
+        raise
+    return True, note
+
+
+def _direct_copyto(remote: str, dst: str, expected_size: int,
+                   is_cancelled) -> tuple[bool, str]:
+    """Скачивание в обход монтирования: rclone copyto remote → tmp → замена.
+
+    Тайминги короткие: монтирование уже попыталось прочитать файл с полными
+    ретраями; здесь ловим только «облако ожило». Мёртвый файл (Яндекс
+    отдаёт 500 мгновенно или молчит подолгу) не должен держать операцию.
+    """
+    rclone = rclone_bin()
+    if rclone is None:
+        return False, tr("rclone не найден")
+    tmp = _tmp_in_dst_dir(dst)
+    cmd = [rclone, "copyto", remote, tmp,
+           "--retries", "1", "--low-level-retries", "4",
+           "--contimeout", "10s", "--timeout", "20s", "--stats", "0"]
+    try:
+        rc, err = _run_cancellable(cmd, is_cancelled)
+    except OSError as exc:
+        _unlink_quiet(tmp)
+        return False, str(exc)
+    if rc != 0:
+        _unlink_quiet(tmp)
+        if rc == -1:
+            return False, tr("прервано")
+        if rc == -2:
+            return False, tr("rclone: превышен бюджет времени скачивания")
+        tail = err.splitlines()[-1] if err else tr("rclone вернул код {rc}").format(rc=rc)
+        return False, tr("rclone: {err}").format(err=tail)
+    if expected_size >= 0 and os.path.getsize(tmp) != expected_size:
+        got = os.path.getsize(tmp)
+        _unlink_quiet(tmp)
+        return False, tr("rclone: получено {got} из {expected} байт").format(
+            got=got, expected=expected_size)
+    os.replace(tmp, dst)
+    return True, tr("скачано напрямую через rclone (в обход монтирования)")
+
+
+def fallback_download(src: str, dst: str, expected_size: int,
+                      is_cancelled) -> tuple[bool, str]:
+    """Добрать облачный файл запасными инструментами; (успех, пояснение).
+
+    src — путь в монтировании, dst — куда положить готовый файл (атомарно,
+    через временный в том же каталоге). Инструменты по порядку: локальное
+    зеркало пары синхронизации, затем прямой rclone copyto из remote.
+    Пояснение при неудаче объединяет причины обоих.
+    """
+    remote = remote_of_path(src)
+    if remote is None:
+        return False, tr("путь вне облачных монтирований")
+    try:
+        ok, note = _from_mirror(remote, dst, expected_size)
+        if ok:
+            return True, note
+        mirror_note = note
+        ok, note = _direct_copyto(remote, dst, expected_size, is_cancelled)
+        if ok:
+            return True, note
+        return False, tr("зеркало: {mirror}; {note}").format(
+            mirror=mirror_note, note=note)
+    except OSError as exc:
+        return False, exc.strerror or str(exc)
