@@ -474,6 +474,8 @@ def remote_of_path(local_path: str) -> str | None:
     name, sep, rel = real[len(root) + 1:].partition(os.sep)
     if not name:
         return None
+    # rclone-пути всегда со слешами, даже если сепаратор ОС другой
+    rel = rel.replace(os.sep, "/")
     return f"{name}:{rel}" if sep else f"{name}:"
 
 
