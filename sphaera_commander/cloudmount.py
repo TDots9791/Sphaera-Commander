@@ -88,6 +88,54 @@ def install_hint() -> str:
               "winget install Rclone.Rclone; winget install WinFsp.WinFsp")
 
 
+WINFSP_REG_KEY = r"SOFTWARE\WOW6432Node\WinFsp"
+
+
+def winfsp_available() -> bool:
+    """Установлен ли WinFsp (обязателен rclone mount на Windows)."""
+    if not IS_WINDOWS:
+        return True
+    import winreg
+
+    try:
+        winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, WINFSP_REG_KEY)
+        return True
+    except OSError:
+        return False
+
+
+def install_winfsp_from_redist(timeout_s: float = 300) -> tuple[bool, str]:
+    """Тихо поставить WinFsp из комплекта (redist/winfsp.msi рядом с exe).
+
+    Запускается от приложения: UAC один раз спросит повышение. Вложенный
+    msiexec изнутри чужой установки MSI запрещён (1618), поэтому WinFsp
+    ставится по запросу пользователя, а не в ходе установки Sphaera.
+    (успех, причина при неудаче).
+    """
+    if not IS_WINDOWS:
+        return False, tr("WinFsp нужен только на Windows")
+    src = os.path.join(os.path.dirname(os.path.abspath(sys.executable)),
+                       "redist", "winfsp.msi")
+    if not os.path.isfile(src):
+        return False, (tr("WinFsp не установлен, в комплекте его нет — "
+                          "установите вручную") + ": " + install_hint())
+    import ctypes
+
+    code = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", "msiexec.exe", f'/i "{src}" /qn /norestart', None, 0)
+    if code <= 32:
+        return False, (tr("не удалось запустить установку WinFsp (код {code}) — "
+                          "установите вручную").format(code=code)
+                       + ": " + install_hint())
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if winfsp_available():
+            return True, ""
+        time.sleep(0.5)
+    return False, (tr("установка WinFsp не завершилась — установите вручную")
+                   + ": " + install_hint())
+
+
 def clean_name(remote: str) -> str:
     """'gdrive:' → 'gdrive'."""
     return remote.rstrip(":").strip()
@@ -343,6 +391,12 @@ def _mount_windows(rclone: str, remote: str) -> str:
     """Windows: облако как диск-буква (WinFsp). rclone работает фоновым
     процессом (--daemon на Windows нет); размонтирование — его завершение.
     Лог пишется в файл: консоли у GUI нет, а diagnose по нему живой."""
+    if not winfsp_available():
+        # WinFsp вшит в дистрибутив (redist/winfsp.msi) — ставим по
+        # запросу (UAC), вложенный msiexec в установщике запрещён
+        ok, note = install_winfsp_from_redist()
+        if not ok:
+            raise RuntimeError(note)
     name = clean_name(remote)
     state = _load_state()
     target = (state.get(name) or {}).get("target") or _pick_letter(state)

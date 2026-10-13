@@ -550,6 +550,16 @@ _T = {
     "Ключи приложения не найдены — повторите подключение и введите Client ID/Secret.":
         ("App keys not found — reconnect and enter the Client ID/Secret.",
          "未找到应用密钥——请重新连接并输入 Client ID/Secret。"),
+    "WinFsp нужен только на Windows": ("WinFsp is only needed on Windows", "WinFsp 仅在 Windows 上需要"),
+    "WinFsp не установлен, в комплекте его нет — установите вручную":
+        ("WinFsp is not installed and missing from the bundle — install it manually",
+         "未安装 WinFsp，安装包中也没有——请手动安装"),
+    "не удалось запустить установку WinFsp (код {code}) — установите вручную":
+        ("failed to start the WinFsp setup (code {code}) — install it manually",
+         "未能启动 WinFsp 安装（代码 {code}）——请手动安装"),
+    "установка WinFsp не завершилась — установите вручную":
+        ("the WinFsp setup did not finish — install it manually",
+         "WinFsp 安装未完成——请手动安装"),
     "Браузер не открылся — перейдите по ссылке вручную и вставьте код:\n{url}":
         ("The browser did not open — follow the link manually and paste the code:\n{url}",
          "浏览器未打开——请手动打开链接并粘贴代码：\n{url}"),

@@ -294,8 +294,10 @@ class WindowsMountTests(unittest.TestCase):
             calls["cmd"] = cmd
             return unittest.mock.Mock(pid=4321, poll=lambda: None)
 
-        with unittest.mock.patch.object(cloudmount, "_pick_letter",
-                                        return_value=target), \
+        with unittest.mock.patch.object(cloudmount, "winfsp_available",
+                                        return_value=True), \
+                unittest.mock.patch.object(cloudmount, "_pick_letter",
+                                           return_value=target), \
                 unittest.mock.patch.object(cloudmount.subprocess, "Popen",
                                            side_effect=fake_popen):
             got = cloudmount.mount("yandex:")
@@ -321,6 +323,34 @@ class WindowsMountTests(unittest.TestCase):
         self.assertEqual(cloudmount.remote_of_path(inside),
                          "yandex:dir/f.docx")
         self.assertFalse(cloudmount.is_cloud_path("C:\\Windows"))
+
+    def test_missing_winfsp_installed_from_redist_before_mount(self):
+        # целевой каталог «диска» существует: монтирование сразу готово
+        target = os.path.join(self.tmp, "mnt")
+        os.makedirs(target)
+
+        def fake_popen(cmd, **kw):
+            return unittest.mock.Mock(pid=11, poll=lambda: None)
+
+        with unittest.mock.patch.object(cloudmount, "winfsp_available",
+                                        side_effect=[False, True]), \
+                unittest.mock.patch.object(cloudmount, "install_winfsp_from_redist",
+                                           return_value=(True, "")) as inst, \
+                unittest.mock.patch.object(cloudmount, "_pick_letter",
+                                           return_value=target), \
+                unittest.mock.patch.object(cloudmount.subprocess, "Popen",
+                                           side_effect=fake_popen):
+            self.assertTrue(cloudmount.mount("yandex:"))
+        inst.assert_called_once()
+
+    def test_mount_fails_clearly_when_winfsp_unavailable(self):
+        with unittest.mock.patch.object(cloudmount, "winfsp_available",
+                                        return_value=False), \
+                unittest.mock.patch.object(cloudmount, "install_winfsp_from_redist",
+                                           return_value=(False, "нет WinFsp; подсказка")):
+            with self.assertRaises(RuntimeError) as cm:
+                cloudmount.mount("yandex:")
+        self.assertIn("подсказка", str(cm.exception))
 
     def test_unmount_kills_process_and_clears_state(self):
         target = os.path.join(self.tmp, "mnt")
