@@ -547,6 +547,17 @@ _T = {
         ("Cloud drives need rclone and WinFsp: winget install Rclone.Rclone; winget install WinFsp.WinFsp",
          "云盘需要 rclone 和 WinFsp：winget install Rclone.Rclone; winget install WinFsp.WinFsp"),
     "нет свободной буквы диска": ("no free drive letter available", "没有可用的磁盘盘符"),
+    "Осторожный режим облачных дисков (медленнее, но бережнее)":
+        ("Careful cloud drive mode (slower but gentler)", "谨慎云盘模式（更慢但更温和）"),
+    "Режим облачных дисков: параноидальный":
+        ("Cloud drive mode: paranoid", "云盘模式：偏执（最谨慎）"),
+    "Режим облачных дисков: стандартный":
+        ("Cloud drive mode: standard", "云盘模式：标准"),
+    "Похоже, приложение Яндекса заблокировано (ошибка 410 «Ресурс больше недоступен»). Создайте новое на oauth.yandex.ru (права: чтение, запись, информация о Диске) и войдите заново.":
+        ("The Yandex app appears to be blocked (error 410 “Resource is no longer available”). "
+         "Create a new one at oauth.yandex.ru (permissions: read, write, disk info) and sign in again.",
+         "Yandex 应用似乎已被封锁（错误 410“资源不再可用”）。请在 oauth.yandex.ru 创建新应用（权限：读取、写入、磁盘信息）并重新登录。"),
+    "Создать новое и войти заново": ("Create a new app and sign in again", "创建新应用并重新登录"),
     "Ключи приложения не найдены — повторите подключение и введите Client ID/Secret.":
         ("App keys not found — reconnect and enter the Client ID/Secret.",
          "未找到应用密钥——请重新连接并输入 Client ID/Secret。"),

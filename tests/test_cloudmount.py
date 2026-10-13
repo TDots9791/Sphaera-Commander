@@ -259,6 +259,71 @@ class CloudMountLiveTests(unittest.TestCase):
         self.assertNotIn("yad", cloudmount._mounted_by_us)
 
 
+class CloudPresetTests(unittest.TestCase):
+    """Режимы осторожности: аргументы rclone и детектор блокировки 410."""
+
+    def tearDown(self):
+        cloudmount.mode = "standard"
+
+    def test_standard_and_paranoid_pace_args(self):
+        self.assertEqual(cloudmount.mode, "standard")
+        std = cloudmount.preset_args()
+        self.assertIn("--tpslimit", std)
+        self.assertIn("10", std[std.index("--tpslimit") + 1])
+        cloudmount.mode = "paranoid"
+        par = cloudmount.preset_args()
+        self.assertIn("4", par[par.index("--tpslimit") + 1])
+        self.assertIn("--low-level-retries", par)
+        self.assertNotIn("--low-level-retries", std)
+
+    def test_pace_only_excludes_timeouts(self):
+        for mode in ("standard", "paranoid"):
+            cloudmount.mode = mode
+            self.assertNotIn("--timeout", cloudmount.preset_args(pace_only=True))
+            self.assertIn("--timeout", cloudmount.preset_args())
+
+    def test_preset_applied_to_mount_command(self):
+        self.tmp = tempfile.mkdtemp(prefix="sc_preset_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        target = os.path.join(self.tmp, "mnt")
+        os.makedirs(target)
+        cloudmount.mode = "paranoid"
+        saved_root = cloudmount.MOUNT_ROOT
+        cloudmount.MOUNT_ROOT = self.tmp
+        self.addCleanup(setattr, cloudmount, "MOUNT_ROOT", saved_root)
+        for patch in (unittest.mock.patch.object(cloudmount, "IS_WINDOWS", False),
+                      unittest.mock.patch.object(cloudmount, "rclone_bin",
+                                                 return_value="/bin/rclone")):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+        def fake_popen(cmd, **kw):
+            calls["cmd"] = cmd
+            os.makedirs(os.path.join(self.tmp, "yandex"), exist_ok=True)
+            return unittest.mock.Mock(wait=lambda: 0, stderr=None)
+
+        calls = {}
+        with unittest.mock.patch.object(cloudmount.subprocess, "Popen",
+                                        side_effect=fake_popen), \
+                unittest.mock.patch.object(
+                    os.path, "ismount",
+                    side_effect=lambda p: os.path.isdir(
+                        os.path.join(self.tmp, "yandex"))):
+            cloudmount.mount("yandex:")
+        self.assertIn("--tpslimit", calls["cmd"])
+        self.assertIn("4", calls["cmd"][calls["cmd"].index("--tpslimit") + 1])
+        self.assertIn("--timeout", calls["cmd"])  # full-пресет: с таймаутами
+
+    def test_looks_like_app_blocked(self):
+        for positive in ("облако смонтировано, но не читается: [Errno 5]",
+                         "Failed to open: [410 - ] Gone",
+                         "410 Resource is no longer available",
+                         "cloud mounted, but not readable: [Errno 5]"):
+            self.assertTrue(cloudmount.looks_like_app_blocked(positive), positive)
+        for negative in ("500 Internal Server Error", "Errno 5", ""):
+            self.assertFalse(cloudmount.looks_like_app_blocked(negative), negative)
+
+
 class WindowsMountTests(unittest.TestCase):
     """Windows-ветка cloudmount: диск-буква через WinFsp, state.json,
     размонтирование завершением процесса. Ветка включается подменой

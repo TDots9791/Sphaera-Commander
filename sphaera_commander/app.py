@@ -318,6 +318,14 @@ class MainWindow(QMainWindow):
                                 lambda: self.toggle_colorize(), checkable=True)
         self.act_colorize.setChecked(config.qsettings().value(
             "view/colorize", "true") in (True, "true", "1"))
+        self.act_cloud_careful = act(
+            tr("Осторожный режим облачных дисков (медленнее, но бережнее)"),
+            None, self.toggle_cloud_careful, checkable=True)
+        from . import cloudmount as _cloudmount
+
+        _cloudmount.mode = str(config.qsettings().value(
+            "cloud/mode", "standard") or "standard")
+        self.act_cloud_careful.setChecked(_cloudmount.mode == "paranoid")
         self.act_theme_dark = act(tr("Тёмная тема (Iustitia)"), None,
                                   lambda: self._set_theme("dark"),
                                   checkable=True)
@@ -383,6 +391,8 @@ class MainWindow(QMainWindow):
         m_view.addAction(self.act_thumbs)
         m_view.addAction(self.act_colorize)
         m_view.addAction(self.act_dirsizes)
+        m_view.addSeparator()
+        m_view.addAction(self.act_cloud_careful)
         m_theme = m_view.addMenu(tr("Тема"))
         theme_group = QActionGroup(m_theme)
         for a in (self.act_theme_dark, self.act_theme_light,
@@ -525,6 +535,17 @@ class MainWindow(QMainWindow):
         self.left.set_thumbnails(on)
         self.right.set_thumbnails(on)
         config.qsettings().setValue("view/thumbnails", on)
+
+    def toggle_cloud_careful(self):
+        """Осторожный режим облаков: пресет paranoid (медленнее, бережнее)."""
+        from . import cloudmount
+
+        cloudmount.mode = "paranoid" if self.act_cloud_careful.isChecked() \
+            else "standard"
+        config.qsettings().setValue("cloud/mode", cloudmount.mode)
+        self._status(tr("Режим облачных дисков: параноидальный")
+                     if cloudmount.mode == "paranoid"
+                     else tr("Режим облачных дисков: стандартный"))
 
     def toggle_colorize(self):
         from . import colorize
@@ -802,10 +823,16 @@ class MainWindow(QMainWindow):
             def apply():
                 if error is not None:
                     if (cloudmount.clean_name(remote) == "yandex"
-                            and not _reauth_done
-                            and "не читается" in error):
-                        # токен недействителен — повторный вход по коду
-                        self._yandex_manual_code(remote, panel)
+                            and cloudmount.looks_like_app_blocked(error)):
+                        # 410/«не читается»: приложение могло попасть под
+                        # блокировку — объясняем и предлагаем цикл заново
+                        if self._ask_yandex_reauth():
+                            # ключи нового приложения — потом вход по коду
+                            if self._ask_yandex_credentials():
+                                self._yandex_manual_code(remote, panel)
+                        else:
+                            self._status(tr("Не удалось подключить {title}: {err}").format(
+                                title=cloudmount.title(remote), err=error))
                         return
                     if "не найден" in error:
                         error += " " + cloudmount.install_hint()
@@ -818,6 +845,22 @@ class MainWindow(QMainWindow):
             self.gui_call.emit(apply)
 
         cloudmount.mount_async(remote, on_done)
+
+    def _ask_yandex_reauth(self) -> bool:
+        """Окно «похоже, приложение Яндекса заблокировано» с кнопкой
+        запуска цикла пересоздания (новое приложение + вход по коду)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(tr("Яндекс.Диск"))
+        box.setText(tr(
+            "Похоже, приложение Яндекса заблокировано (ошибка 410 «Ресурс "
+            "больше недоступен»). Создайте новое на oauth.yandex.ru "
+            "(права: чтение, запись, информация о Диске) и войдите заново."))
+        reauth = box.addButton(
+            tr("Создать новое и войти заново"), QMessageBox.AcceptRole)
+        box.addButton(tr("Отмена"), QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is reauth
 
     def _ask_yandex_credentials(self) -> bool:
         from sphaera_commander.dialogs import YandexKeyDialog

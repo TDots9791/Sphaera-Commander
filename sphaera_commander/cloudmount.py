@@ -47,6 +47,47 @@ REMOTE_TITLES = {
     "onedrive": "OneDrive",
 }
 
+# Режимы осторожности облачных операций (рекомендации Яндекса и rclone):
+#   standard  — умеренный темп, пауза после загрузки, таймаут с запасом;
+#   paranoid  — всё то же с зазором: меньше параллелизма и запросов/с,
+#               длиннее паузы и таймауты, больше низкоуровневых ретраев.
+# Аргументы добавляются ко всем командам rclone (mount, copyto, bisync).
+# «pace» — темп и паузы (применяются везде); «extra» — таймауты и ретраи
+# (mount и bisync; в запасном скачивании не применяются — там короткий
+# таймаут защищает от мёртвых файлов).
+CLOUD_PRESETS: dict[str, dict[str, list[str]]] = {
+    "standard": {
+        "pace": ["--tpslimit", "10", "--transfers", "4",
+                 "--yandex-upload-wait", "2s"],
+        "extra": ["--timeout", "10m"],
+    },
+    "paranoid": {
+        "pace": ["--tpslimit", "4", "--transfers", "2", "--checkers", "4",
+                 "--yandex-upload-wait", "3s"],
+        "extra": ["--timeout", "15m", "--low-level-retries", "20"],
+    },
+}
+mode: str = "standard"  # ключ CLOUD_PRESETS; переключается из интерфейса
+
+
+def preset_args(pace_only: bool = False) -> list[str]:
+    """Аргументы осторожности текущего режима (копия списка)."""
+    preset = CLOUD_PRESETS.get(mode, CLOUD_PRESETS["standard"])
+    args = list(preset["pace"])
+    if not pace_only:
+        args += list(preset["extra"])
+    return args
+
+
+def looks_like_app_blocked(text: str | None) -> bool:
+    """Похоже, OAuth-приложение Яндекса заблокировано (410/Gone) — ошибку
+    отдаёт и зонд монтирования («облако смонтировано, но не читается»)."""
+    t = (text or "").lower()
+    return ("410" in t or "gone" in t
+            or "ресурс больше недоступен" in t
+            or "not readable" in t
+            or "не читается" in t)
+
 # remote, смонтированные этим сеансом приложения (размонтируются на выходе)
 _mounted_by_us: set[str] = set()
 _lock = threading.Lock()
@@ -361,7 +402,7 @@ def mount(remote: str) -> str:
     os.makedirs(path, exist_ok=True)
     proc = subprocess.Popen(
         [rclone, "mount", clean_name(remote) + ":", path,
-         "--vfs-cache-mode", "writes",
+         "--vfs-cache-mode", "writes", *preset_args(),
          "--daemon", "--daemon-wait", str(DAEMON_WAIT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         start_new_session=True)
@@ -403,7 +444,7 @@ def _mount_windows(rclone: str, remote: str) -> str:
     log = os.path.join(_data_root(), "cloud-mounts", f"{name}.log")
     os.makedirs(os.path.dirname(log), exist_ok=True)
     cmd = [rclone, "mount", name + ":", target,
-           "--vfs-cache-mode", "writes",
+           "--vfs-cache-mode", "writes", *preset_args(),
            "--volname", "Sphaera " + title(remote),
            "--log-file", log, "--log-level", "INFO"]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -634,7 +675,8 @@ def _direct_copyto(remote: str, dst: str, expected_size: int,
     tmp = _tmp_in_dst_dir(dst)
     cmd = [rclone, "copyto", remote, tmp,
            "--retries", "1", "--low-level-retries", "4",
-           "--contimeout", "10s", "--timeout", "20s", "--stats", "0"]
+           "--contimeout", "10s", "--timeout", "20s", "--stats", "0",
+           *preset_args(pace_only=True)]
     try:
         rc, err = _run_cancellable(cmd, is_cancelled)
     except OSError as exc:

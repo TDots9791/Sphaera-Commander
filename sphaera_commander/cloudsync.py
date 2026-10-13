@@ -176,7 +176,9 @@ def sync_command(pair: dict) -> list[str]:
     remote = pair["remote"] if ":" in pair["remote"] else f"yad:{pair['remote']}"
     local = os.path.expanduser(pair["local"])
     listing = listing_dir(pair["id"])
-    base = [rclone, "--retries=2"]
+    from . import cloudmount  # лениво: цикла импортов нет
+
+    base = [rclone, "--retries=2", *cloudmount.preset_args()]
     for excl in DEFAULT_EXCLUDES:
         base += ["--exclude", excl]
     if is_first_sync(pair["id"]):
