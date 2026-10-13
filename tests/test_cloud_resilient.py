@@ -295,6 +295,11 @@ class RemotePathAndMirrorTests(unittest.TestCase):
         patcher = mock.patch.object(cloudmount, "MOUNT_ROOT", self.mount_root)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # POSIX-раскладка путей (MOUNT_ROOT) закрепляется явно: на
+        # windows-раннере ветка облака — буквы дисков, не этот каталог
+        patcher = mock.patch.object(cloudmount, "IS_WINDOWS", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_remote_of_path(self):
         src = os.path.join(self.mount_root, "yandex",
@@ -377,6 +382,9 @@ class FallbackDownloadTests(unittest.TestCase):
         os.makedirs(os.path.dirname(self.dst))
         # MOUNT_ROOT — корень монтирований; src даёт 'yandex:dir/f.bin'
         patcher = mock.patch.object(cloudmount, "MOUNT_ROOT", self.tmp)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(cloudmount, "IS_WINDOWS", False)
         patcher.start()
         self.addCleanup(patcher.stop)
 

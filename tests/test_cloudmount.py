@@ -20,6 +20,11 @@ class CloudMountCoreTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="sc_cm_")
         self._old_root = cloudmount.MOUNT_ROOT
         cloudmount.MOUNT_ROOT = self.tmp
+        # класс проверяет POSIX/FUSE-ветку — закрепляем её явно: на
+        # windows-раннере по умолчанию была бы ветка букв дисков
+        patcher = unittest.mock.patch.object(cloudmount, "IS_WINDOWS", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         with unittest.mock.patch.object(cloudmount, "rclone_bin",
                                         return_value="/usr/bin/rclone"):
             self.remote = "gdrive:"
@@ -270,6 +275,8 @@ class WindowsMountTests(unittest.TestCase):
         ):
             patch.start()
             self.addCleanup(patch.stop)
+        # ':' в имени каталога на настоящей Windows создать нельзя
+        # («Z:» трактуется как диск) — цель монтирования тут обычный каталог
 
     def _fake_rclone(self, proc):
         return unittest.mock.patch.object(
@@ -277,9 +284,9 @@ class WindowsMountTests(unittest.TestCase):
             unittest.mock.Mock(return_value=proc, side_effect=None))
 
     def test_mount_builds_windows_command_and_state(self):
-        # целевой каталог «диска» существует заранее — монтирование сразу
-        # готово (в жизни его создаёт WinFsp)
-        target = os.path.join(self.tmp, "Z:")
+        # целевой каталог существует заранее — монтирование сразу готово
+        # (в жизни это буква диска, созданная WinFsp)
+        target = os.path.join(self.tmp, "mnt")
         os.makedirs(target)
         calls = {}
 
@@ -305,19 +312,18 @@ class WindowsMountTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt",
                          "буквы дисков и splitdrive существуют только на Windows")
     def test_windows_path_recognition(self):
-        target = "Z:\\"
+        # распознавание purely по state: реальный смонтированный диск не нужен
         state = cloudmount._load_state()
-        state["yandex"] = {"target": target, "pid": 1}
+        state["yandex"] = {"target": "Q:\\", "pid": 1}
         cloudmount._save_state(state)
-        inside = os.path.join(target, "dir", "f.docx")
-        self.assertTrue(cloudmount.is_mounted("yandex:"))
+        inside = "Q:\\dir\\f.docx"
         self.assertTrue(cloudmount.is_cloud_path(inside))
         self.assertEqual(cloudmount.remote_of_path(inside),
                          "yandex:dir/f.docx")
         self.assertFalse(cloudmount.is_cloud_path("C:\\Windows"))
 
     def test_unmount_kills_process_and_clears_state(self):
-        target = os.path.join(self.tmp, "Y:")
+        target = os.path.join(self.tmp, "mnt")
         os.makedirs(target)
         state = cloudmount._load_state()
         state["yad"] = {"target": target, "pid": 999}
