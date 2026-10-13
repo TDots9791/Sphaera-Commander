@@ -719,7 +719,17 @@ class MainWindow(QMainWindow):
                         lambda d=dev: self._mount_device(d, panel))
         menu.addSeparator()
         menu.addAction(tr("Синхронизация с облаком…"), self.open_cloud_sync)
-        for remote in cloudmount.primary_remotes(cloudsync_remotes()):
+        remotes = cloudmount.primary_remotes(cloudsync_remotes())
+        if not any(cloudmount.clean_name(r) in ("yad", "yandex")
+                   for r in remotes):
+            # чистая машина: предлагаем Яндекс.Диск, хотя remote ещё не
+            # создан — ключи приложения и вход по коду запросятся при
+            # первом подключении (см. _mount_cloud)
+            menu.addAction(
+                tr("{title} — подключить как диск").format(
+                    title=cloudmount.title("yandex:")),
+                lambda pnl=panel: self._mount_cloud("yandex:", pnl))
+        for remote in remotes:
             name = cloudmount.title(remote)
             if cloudmount.is_mounted(remote):
                 path = cloudmount.mountpoint(remote)
@@ -797,6 +807,8 @@ class MainWindow(QMainWindow):
                         # токен недействителен — повторный вход по коду
                         self._yandex_manual_code(remote, panel)
                         return
+                    if "не найден" in error:
+                        error += " " + cloudmount.install_hint()
                     self._status(tr("Не удалось подключить {title}: {err}").format(
                         title=cloudmount.title(remote), err=error))
                     return
@@ -821,8 +833,11 @@ class MainWindow(QMainWindow):
         try:
             cloudmount.set_client_credentials("yandex:", client_id, client_secret)
         except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+            message = str(exc)
+            if "не найден" in message:
+                message += " " + cloudmount.install_hint()
             QMessageBox.warning(self, tr("Яндекс.Диск"),
-                                tr("Не удалось сохранить ключи: {err}").format(err=exc))
+                                tr("Не удалось сохранить ключи: {err}").format(err=message))
             return False
         return True
 

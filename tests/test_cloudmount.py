@@ -176,7 +176,9 @@ class CloudMountCoreTests(unittest.TestCase):
                                         return_value="/usr/bin/rclone"), \
              unittest.mock.patch.object(cloudmount.subprocess,
                                         "run") as mock_run:
+            mock_run.return_value = FakeProc()
             cloudmount.set_client_credentials("yandex:", "cid", "csec")
+        # config dump (есть ли секция) идёт первым; update — последний
         cmd = mock_run.call_args[0][0]
         self.assertEqual(cmd[:3], ["/usr/bin/rclone", "config", "update"])
         for token in ("yandex", "client_id", "cid", "client_secret", "csec"):
@@ -250,6 +252,140 @@ class CloudMountLiveTests(unittest.TestCase):
         cloudmount.unmount("yad:")
         self.assertFalse(cloudmount.is_mounted("yad:"))
         self.assertNotIn("yad", cloudmount._mounted_by_us)
+
+
+class WindowsMountTests(unittest.TestCase):
+    """Windows-ветка cloudmount: диск-буква через WinFsp, state.json,
+    размонтирование завершением процесса. Ветка включается подменой
+    IS_WINDOWS, реального монтирования нет — только механика."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="sc_winmnt_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        data_root = os.path.join(self.tmp, "data")
+        for patch in (
+            unittest.mock.patch.object(cloudmount, "IS_WINDOWS", True),
+            unittest.mock.patch.object(cloudmount, "_data_root",
+                                       return_value=data_root),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def _fake_rclone(self, proc):
+        return unittest.mock.patch.object(
+            cloudmount.subprocess, "Popen",
+            unittest.mock.Mock(return_value=proc, side_effect=None))
+
+    def test_mount_builds_windows_command_and_state(self):
+        # целевой каталог «диска» существует заранее — монтирование сразу
+        # готово (в жизни его создаёт WinFsp)
+        target = os.path.join(self.tmp, "Z:")
+        os.makedirs(target)
+        calls = {}
+
+        def fake_popen(cmd, **kw):
+            calls["cmd"] = cmd
+            return unittest.mock.Mock(pid=4321, poll=lambda: None)
+
+        with unittest.mock.patch.object(cloudmount, "_pick_letter",
+                                        return_value=target), \
+                unittest.mock.patch.object(cloudmount.subprocess, "Popen",
+                                           side_effect=fake_popen):
+            got = cloudmount.mount("yandex:")
+        self.assertEqual(got, target)
+        self.assertIn("--volname", calls["cmd"])
+        self.assertNotIn("--daemon", calls["cmd"])  # на Windows его нет
+        self.assertIn("yandex:", calls["cmd"])
+        state = cloudmount._load_state()
+        self.assertEqual(state["yandex"]["target"], target)
+        self.assertEqual(state["yandex"]["pid"], 4321)
+        self.assertTrue(cloudmount.is_mounted("yandex:"))
+        self.assertEqual(cloudmount.mountpoint("yandex:"), target)
+
+    @unittest.skipUnless(os.name == "nt",
+                         "буквы дисков и splitdrive существуют только на Windows")
+    def test_windows_path_recognition(self):
+        target = "Z:\\"
+        state = cloudmount._load_state()
+        state["yandex"] = {"target": target, "pid": 1}
+        cloudmount._save_state(state)
+        inside = os.path.join(target, "dir", "f.docx")
+        self.assertTrue(cloudmount.is_mounted("yandex:"))
+        self.assertTrue(cloudmount.is_cloud_path(inside))
+        self.assertEqual(cloudmount.remote_of_path(inside),
+                         "yandex:dir/f.docx")
+        self.assertFalse(cloudmount.is_cloud_path("C:\\Windows"))
+
+    def test_unmount_kills_process_and_clears_state(self):
+        target = os.path.join(self.tmp, "Y:")
+        os.makedirs(target)
+        state = cloudmount._load_state()
+        state["yad"] = {"target": target, "pid": 999}
+        cloudmount._save_state(state)
+        kills = []
+
+        def fake_run(cmd, **kw):
+            kills.append(cmd)
+            os.rmdir(target)  # WinFsp «убрал» диск вслед за процессом
+
+        with unittest.mock.patch.object(cloudmount.subprocess, "run",
+                                        side_effect=fake_run):
+            cloudmount.unmount("yad:")
+        self.assertIn("/PID", kills[0])
+        self.assertEqual(kills[0][2], "999")
+        self.assertNotIn("yad", cloudmount._load_state())
+        self.assertFalse(cloudmount.is_mounted("yad:"))
+
+    def test_pick_letter_skips_existing_drives(self):
+        # «занятость» буквы проверяется по реальной файловой системе —
+        # подменяем exists: D: есть, C: нет
+        def fake_exists(path):
+            return path.upper() == "D:" + os.sep
+
+        with unittest.mock.patch.object(cloudmount, "_DRIVE_LETTERS", "DC"), \
+                unittest.mock.patch.object(os.path, "exists", fake_exists):
+            self.assertEqual(cloudmount._pick_letter({}), "C:" + os.sep)
+            with unittest.mock.patch.object(
+                    os.path, "exists", lambda p: True), \
+                    self.assertRaises(RuntimeError):
+                cloudmount._pick_letter({})
+
+    def test_rclone_bin_probes_windows_locations(self):
+        # первый кандидат — shim winget в %LOCALAPPDATA%
+        base = os.path.join(self.tmp, "loc")
+        probe = os.path.join(base, "Microsoft", "WinGet", "Links",
+                             "rclone.exe")
+        os.makedirs(os.path.dirname(probe))
+        open(probe, "wb").close()
+
+        with unittest.mock.patch("os.name", "nt"), \
+                unittest.mock.patch.dict(
+                    os.environ, {"LOCALAPPDATA": base}), \
+                unittest.mock.patch.object(shutil, "which",
+                                           return_value=None):
+            self.assertEqual(cloudmount.rclone_bin(), probe)
+
+    def test_set_client_credentials_creates_missing_section(self):
+        runs = []
+
+        def fake_run(cmd, **kw):
+            runs.append(cmd)
+            if cmd[1] == "config" and cmd[2] == "dump":
+                return unittest.mock.Mock(returncode=0, stdout="{}")
+
+            class P:
+                returncode = 0
+            return P()
+
+        with unittest.mock.patch.object(cloudmount, "rclone_bin",
+                                        return_value="/bin/rclone"), \
+                unittest.mock.patch.object(cloudmount.subprocess, "run",
+                                           side_effect=fake_run):
+            cloudmount.set_client_credentials("yandex:", "id", "secret")
+        # [0] — config dump, [1] — create недостающей секции, [2] — update
+        self.assertEqual(runs[1][:3], ["/bin/rclone", "config", "create"])
+        self.assertEqual(runs[1][3:5], ["yandex", "yandex"])
+        self.assertEqual(runs[2][:3], ["/bin/rclone", "config", "update"])
 
 
 def cloudsync_remotes():

@@ -31,7 +31,26 @@ DEFAULT_EXCLUDES = ["*.tmp", "*.swp", ".DS_Store", "Thumbs.db", "desktop.ini"]
 
 
 def rclone_bin() -> str | None:
-    return shutil.which("rclone")
+    """Путь до rclone: PATH, затем типовые места установки (Windows)."""
+    exe = shutil.which("rclone")
+    if exe:
+        return exe
+    local = shutil.which(os.path.expanduser("~/.local/bin/rclone"))
+    if local:
+        return local
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA", "")
+        for cand in (
+            os.path.join(base, "Microsoft", "WinGet", "Links", "rclone.exe"),
+            os.path.join(base, "Programs", "rclone", "rclone.exe"),
+            os.path.expanduser(os.path.join("~", "scoop", "apps", "rclone",
+                                            "current", "rclone.exe")),
+            r"C:\Program Files\rclone\rclone.exe",
+            r"C:\Program Files (x86)\rclone\rclone.exe",
+        ):
+            if cand and os.path.isfile(cand):
+                return cand
+    return None
 
 
 def yad_bin() -> str | None:

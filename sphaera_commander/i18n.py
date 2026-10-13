@@ -543,6 +543,10 @@ _T = {
         ("cloud mounted, but not readable: {exc} — check access (rclone lsd {name}:)",
          "云盘已挂载，但无法读取：{exc} — 请检查访问权限（rclone lsd {name}:）"),
     "fusermount3 не найден": ("fusermount3 not found", "未找到 fusermount3"),
+    "Для облачных дисков нужны rclone и WinFsp: winget install Rclone.Rclone; winget install WinFsp.WinFsp":
+        ("Cloud drives need rclone and WinFsp: winget install Rclone.Rclone; winget install WinFsp.WinFsp",
+         "云盘需要 rclone 和 WinFsp：winget install Rclone.Rclone; winget install WinFsp.WinFsp"),
+    "нет свободной буквы диска": ("no free drive letter available", "没有可用的磁盘盘符"),
     "rclone вернул код {rc}": ("rclone returned code {rc}", "rclone 返回代码 {rc}"),
     "rclone: {err}": ("rclone: {err}", "rclone: {err}"),
     "rclone: превышен бюджет времени скачивания":
