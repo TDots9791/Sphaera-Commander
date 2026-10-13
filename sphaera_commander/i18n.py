@@ -547,6 +547,12 @@ _T = {
         ("Cloud drives need rclone and WinFsp: winget install Rclone.Rclone; winget install WinFsp.WinFsp",
          "云盘需要 rclone 和 WinFsp：winget install Rclone.Rclone; winget install WinFsp.WinFsp"),
     "нет свободной буквы диска": ("no free drive letter available", "没有可用的磁盘盘符"),
+    "Ключи приложения не найдены — повторите подключение и введите Client ID/Secret.":
+        ("App keys not found — reconnect and enter the Client ID/Secret.",
+         "未找到应用密钥——请重新连接并输入 Client ID/Secret。"),
+    "Браузер не открылся — перейдите по ссылке вручную и вставьте код:\n{url}":
+        ("The browser did not open — follow the link manually and paste the code:\n{url}",
+         "浏览器未打开——请手动打开链接并粘贴代码：\n{url}"),
     "rclone вернул код {rc}": ("rclone returned code {rc}", "rclone 返回代码 {rc}"),
     "rclone: {err}": ("rclone: {err}", "rclone: {err}"),
     "rclone: превышен бюджет времени скачивания":

@@ -851,9 +851,21 @@ class MainWindow(QMainWindow):
 
         client_id, _secret = cloudmount.credentials_of(remote)
         if not client_id:
-            self._status(tr("Ключи приложения не введены"))
+            # молчаливый выход здесь выглядит как «ничего не произошло» —
+            # показываем причину честно
+            QMessageBox.warning(
+                self, tr("Яндекс.Диск"),
+                tr("Ключи приложения не найдены — повторите подключение и введите Client ID/Secret."))
             return
-        webbrowser.open(cloudsync_authorize_url(client_id))
+        url = cloudsync_authorize_url(client_id)
+        try:
+            opened = webbrowser.open(url)
+        except Exception:
+            opened = False
+        if not opened:
+            QMessageBox.information(
+                self, tr("Яндекс.Диск"),
+                tr("Браузер не открылся — перейдите по ссылке вручную и вставьте код:\n{url}").format(url=url))
         self._status(tr("🌐 войдите на Яндексе и вставьте код подтверждения…"))
         dlg = YandexCodeDialog(self)
         if dlg.exec() != QDialog.Accepted:

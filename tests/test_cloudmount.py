@@ -371,6 +371,20 @@ class WindowsMountTests(unittest.TestCase):
                                            return_value=None):
             self.assertEqual(cloudmount.rclone_bin(), probe)
 
+    def test_rclone_bundled_next_to_executable(self):
+        # вшитый в дистрибутив rclone лежит рядом с исполняемым файлом;
+        # на Linux — без расширения, имя подставляется по os.name
+        probe_dir = os.path.join(self.tmp, "app")
+        os.makedirs(probe_dir)
+        name = "rclone.exe" if os.name == "nt" else "rclone"
+        open(os.path.join(probe_dir, name), "wb").close()
+        with unittest.mock.patch.object(sys, "executable",
+                                        os.path.join(probe_dir, "app.exe")), \
+                unittest.mock.patch.object(shutil, "which",
+                                           return_value=None):
+            self.assertEqual(cloudmount.rclone_bin(),
+                             os.path.join(probe_dir, name))
+
     def test_set_client_credentials_creates_missing_section(self):
         runs = []
 

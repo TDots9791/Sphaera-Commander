@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 
 YAD_CONFIG = os.path.expanduser("~/.config/yad-sync/pairs.json")
@@ -31,13 +32,18 @@ DEFAULT_EXCLUDES = ["*.tmp", "*.swp", ".DS_Store", "Thumbs.db", "desktop.ini"]
 
 
 def rclone_bin() -> str | None:
-    """Путь до rclone: PATH, затем типовые места установки (Windows)."""
+    """Путь до rclone: PATH, exe-каталог приложения, типовые места (Windows)."""
     exe = shutil.which("rclone")
     if exe:
         return exe
     local = shutil.which(os.path.expanduser("~/.local/bin/rclone"))
     if local:
         return local
+    # rclone, вшитый в дистрибутив (лежит рядом с исполняемым файлом)
+    bundled = os.path.join(os.path.dirname(os.path.abspath(sys.executable)),
+                           "rclone.exe" if os.name == "nt" else "rclone")
+    if os.path.isfile(bundled):
+        return bundled
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA", "")
         for cand in (
